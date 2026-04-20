@@ -214,21 +214,6 @@ Because this is a research workspace, it is best to inspect the top of a script 
 - checkpoint paths
 - continuation settings
 
-## Notes on Repository Scope
-
-This Git snapshot is intentionally **source-only**.
-
-Excluded from version control:
-
-- runtime checkpoints
-- run directories
-- logs
-- energy trace text files
-- generated plots and PDFs
-- local virtual environments
-- shell scripts containing machine- or user-specific information
-
-The goal is to preserve the research code itself without bundling bulky or sensitive runtime artifacts.
 
 ## Research Themes Captured Here
 
@@ -249,5 +234,3 @@ This is an active research codebase. Expect:
 - some duplicated experimental scaffolding across directories
 - historical prototypes alongside newer NIR pipelines
 - parameter settings embedded directly in scripts
-
-That is normal for the way this workspace evolved: it is meant to preserve the actual experimental path, not just a final cleaned abstraction layer.
