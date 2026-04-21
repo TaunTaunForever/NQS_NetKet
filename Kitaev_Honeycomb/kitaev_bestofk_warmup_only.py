@@ -18,7 +18,7 @@ from flax import serialization
 import flax.linen as nn
 from flax.linen.initializers import normal
 
-from define_Kitaev_Hamiltonian import kitaev_hamiltonian
+from hamiltonian import kitaev_hamiltonian
 
 print(jax.devices())
 jax.config.update("jax_enable_x64", True)

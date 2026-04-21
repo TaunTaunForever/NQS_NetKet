@@ -7,20 +7,6 @@ Research code for variational neural-network studies of frustrated spin models u
 Daniel Sepulveda  
 Academic email: `sepulved@mcmaster.ca`
 
-## Original Project Aim
-
-The original intention of this project was to study **GCNN applications to the Kitaev and Gamma honeycomb models**. In particular, the early focus was on using graph-based neural quantum states to approximate ground states, compare convergence across system sizes, and evaluate how well symmetry-aware neural architectures perform on these frustrated spin systems.
-
-Over time, that initial GCNN-centered program expanded into a broader research workspace that now also includes:
-
-- ViT-based neural quantum states
-- SR / minSR / SRt optimization studies
-- symmetry-projected and input-projected ansatzes
-- Neural Importance Resampling (NIR) workflows
-- continuation and refinement pipelines for long-running experiments
-
-The move toward **ViT-based ansatzes** and later **NIR-based training** was largely precipitated by persistent convergence difficulties with the earlier **GCNN + local spin-flip sampling regime**. That struggle motivated a broader search for architectures and sampling/update strategies that could behave more robustly on the Kitaev and Gamma systems, especially once the project began pushing beyond the easiest small-system settings.
-
 This workspace collects the author’s extensions on top of the original NetKet API, with a strong focus on:
 
 - Kitaev honeycomb models
@@ -32,8 +18,6 @@ This workspace collects the author’s extensions on top of the original NetKet 
 - SR / minSR / SRt optimization workflows
 - Neural Importance Resampling (NIR) with learned proposal networks
 - symmetry-aware ansatz design, including full projection and input-level canonicalization
-
-The current emphasis on **8-site** and **18-site** support reflects the project’s practical workflow: smaller systems were used heavily for local prototyping, debugging, and rapid iteration, while larger system studies were intended to be pushed to HPC clusters once model architecture and optimization behavior had been validated on those smaller instances.
 
 The repository is organized as an experimental research workspace rather than a polished Python package. Most scripts are intended to be run directly.
 
@@ -194,15 +178,18 @@ The naming conventions are fairly consistent:
 
 ## Running the Code
 
-This repository assumes an already configured Python virtual environment with an up-to-date NetKet/JAX installation.
+This repository assumes a local Python environment with NetKet/JAX installed. In the original workspace, experiments were typically run from project-local virtual environments such as:
 
-That environment is **not** part of the committed source snapshot.
+- `NetKet_venv/`
+- `NetKet_Updated_venv/`
+
+Those environments are **not** part of the committed source snapshot.
 
 In practice, most scripts are launched directly, for example:
 
 ```bash
-python Kitaev_Honeycomb/8-site/nir_experiments/kitaev_honeycomb_ViT_8_nir.py
-python Gamma_Honeycomb/18-site/nir_experiments/gamma_honeycomb_ViT_18_nir_multigpu.py
+python Kitaev_Honeycomb/8-site/nir_experiments/vit_nir.py
+python Gamma_Honeycomb/18-site/nir_experiments/vit_nir_multigpu.py
 ```
 
 Because this is a research workspace, it is best to inspect the top of a script before running it to confirm:
@@ -234,3 +221,4 @@ This is an active research codebase. Expect:
 - some duplicated experimental scaffolding across directories
 - historical prototypes alongside newer NIR pipelines
 - parameter settings embedded directly in scripts
+

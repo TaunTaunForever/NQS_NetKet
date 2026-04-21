@@ -30,7 +30,7 @@ new sampling pipeline around the current symmetry-projected ViT.
   Core importance-resampling utilities: log-weight normalization, ESS, efficiency,
   and multinomial resampling.
 
-- `kitaev_honeycomb_ViT_18_symm_singlegpu_nir.py`
+- `vit_nir_symmproj_singlegpu.py`
   A starter launcher for 18-site single-GPU symmetry-projected ViT experiments.
   It currently scaffolds the Hamiltonian/model setup and imports the NIR utilities,
   but does not yet replace the full NetKet sampling loop.

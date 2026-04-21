@@ -5,7 +5,7 @@ experiments on the 8-site Kitaev model.
 
 Current starter experiment:
 
-- `kitaev_honeycomb_ViT_8_nir.py`
+- `vit_nir.py`
   A lightweight plain-ViT NIR trainer using:
   - `NUM_LAYERS = 2`
   - `EMBED_DIM = 8`

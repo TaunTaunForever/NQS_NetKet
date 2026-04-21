@@ -12,8 +12,8 @@ import numpy as np
 import optax
 from scipy.sparse.linalg import eigsh
 
-from define_Kitaev_Hamiltonian import kitaev_hamiltonian
-from kitaev_honeycomb_vit_model import HoneycombPatchViT
+from hamiltonian import kitaev_hamiltonian
+from vit_model import HoneycombPatchViT
 
 
 jax.config.update("jax_enable_x64", True)
