@@ -2,6 +2,7 @@
 ._*
 **/._*
 .codex
+CODEX_WORKSPACE_CONTEXT.md
 
 __pycache__/
 *.py[cod]
