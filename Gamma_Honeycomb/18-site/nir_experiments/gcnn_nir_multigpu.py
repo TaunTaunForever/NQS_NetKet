@@ -27,7 +27,6 @@ if str(PARENT_18) not in sys.path:
     sys.path.insert(0, str(PARENT_18))
 
 from hamiltonian import gamma_hamiltonian
-from vit_model import HoneycombPatchViT
 
 print(jax.devices())
 jax.config.update("jax_enable_x64", True)
@@ -47,36 +46,33 @@ from proposal_network import (
     train_proposal_step,
 )
 
-LEARN_PHASE_STAGE_1 = False
+LEARN_PHASE_STAGE_1 = True
 LEARN_PHASE_STAGE_2 = True
 LEARN_PHASE_STAGE_3 = True
 
 NUM_SITES = 18
 
-NUM_SAMPLES_STAGE_1 = 3 * 2**10
+NUM_SAMPLES_STAGE_1 = 3**8
 NUM_SAMPLES_STAGE_2 = NUM_SAMPLES_STAGE_1
-NUM_SAMPLES_STAGE_3 = 3 * 2**11
+NUM_SAMPLES_STAGE_3 = 3**9
 NUM_ITERS_TOTAL = 2000
 
-EMBED_DIM = 24
-NUM_HEADS = 4
-NUM_LAYERS = 2
-PATCH_SIZE = 1
-MLP_HIDDEN_DIM = 2 * EMBED_DIM
-CHUNK_SIZE = 512
+NUM_LAYERS = 3
+WIDTH = 18
+CHUNK_SIZE = None
 
 TRAIN_LR_STAGE_1 = 1e-2
 TRAIN_LR_STAGE_2 = 1e-2
 TRAIN_LR_STAGE_3 = 5e-3
-TRAIN_LR_STAGE_1_ITERS = 50
-TRAIN_LR_STAGE_2_ITERS = 600
+TRAIN_LR_STAGE_1_ITERS = 100
+TRAIN_LR_STAGE_2_ITERS = 1500
 LOG_STEP_SIZE = 1
 WRITE_EVERY = 1
 SAVE_PARAMS_EVERY = 25
 
 # ---------- NIR proposal network ----------
-NIR_PROPOSAL_BATCH = 3 * 2**10
-NIR_MAX_PROPOSAL_BATCHES = 8
+NIR_PROPOSAL_BATCH = 3**8
+NIR_MAX_PROPOSAL_BATCHES = 4
 NIR_MAX_ADAPTIVE_ROUNDS = 4
 NIR_ESS_THRESHOLD_FRAC = 0.4
 NIR_EFFICIENCY_THRESHOLD_STAGE_1 = 0.15
@@ -88,8 +84,8 @@ NIR_PROPOSAL_LR_STAGE_3 = 3e-4
 NIR_PROPOSAL_STEPS_STAGE_1 = 4
 NIR_PROPOSAL_STEPS_STAGE_2 = 2
 NIR_PROPOSAL_STEPS_STAGE_3 = 1
-NIR_PROPOSAL_EMBED_DIM = 24
-NIR_PROPOSAL_HEADS = 12
+NIR_PROPOSAL_EMBED_DIM = 18
+NIR_PROPOSAL_HEADS = 3
 NIR_PROPOSAL_LAYERS = 2
 NIR_PROPOSAL_MLP = 2 * NIR_PROPOSAL_EMBED_DIM
 NIR_PROB_FLOOR = 1e-6
@@ -150,11 +146,10 @@ TODAY = date.today().isoformat()
 JOB_BASE = (
     f"{NUM_SITES}-site_"
     f"{NUM_LAYERS}_layers_"
-    f"{NUM_HEADS}_heads_"
-    f"{PATCH_SIZE}_patches_"
+    f"{WIDTH}_width_"
     f"identity_"
     f"{NUM_SAMPLES_STAGE_1}to{NUM_SAMPLES_STAGE_3}_samples_"
-    f"{TODAY}_Gamma_ViT_NIR_multiphase"
+    f"{TODAY}_Gamma_GCNN_NIR_single_stage"
 )
 
 RUNS_DIR = THIS_DIR / "runs" / TODAY
@@ -185,27 +180,14 @@ def fresh_key():
 
 
 def build_model():
-    return HoneycombPatchViT(
-        embed_dim=EMBED_DIM,
-        num_heads=NUM_HEADS,
-        num_layers=NUM_LAYERS,
-        mlp_hidden_dim=MLP_HIDDEN_DIM,
-        patch_size=PATCH_SIZE,
-        learn_phase=LEARN_PHASE_STAGE_1,
-        permutation=tuple(range(graph.n_nodes)),
-    )
+    return nk.models.GCNN(symmetries = _symm_group, layers = NUM_LAYERS, equal_amplitudes = True, features = WIDTH,\
+                        activation = nk.nn.activation.reim_selu, param_dtype=np.complex128)
+
 
 
 def build_model_for_phase(learn_phase):
-    return HoneycombPatchViT(
-        embed_dim=EMBED_DIM,
-        num_heads=NUM_HEADS,
-        num_layers=NUM_LAYERS,
-        mlp_hidden_dim=MLP_HIDDEN_DIM,
-        patch_size=PATCH_SIZE,
-        learn_phase=learn_phase,
-        permutation=tuple(range(graph.n_nodes)),
-    )
+    return nk.models.GCNN(symmetries = _symm_group, layers = NUM_LAYERS, equal_amplitudes = True, features = WIDTH,\
+                        activation = nk.nn.activation.reim_selu, param_dtype=np.complex128)
 
 
 def current_learn_phase(step):
@@ -660,13 +642,13 @@ with open(mean_energy_file, "w") as f:
 
 plt.figure(figsize=(10, 6))
 if energy:
-    plt.plot(energy)
+    plt.plot(range(1, len(energy) + 1), energy)
 plt.xscale("log")
 plt.xlabel("Iteration")
 plt.ylabel("Energy")
 plt.title(f"{NUM_SITES}-site Gamma (NIR training)")
 plt.tight_layout()
-plot_file = RUN_DIR / f"gamma_vit_{JOB_BASE}.png"
+plot_file = RUN_DIR / f"gamma_gcnn_{JOB_BASE}.png"
 plt.savefig(plot_file)
 if SHOW_PLOTS:
     plt.show()
@@ -705,11 +687,10 @@ summary = {
     "target_efficiency_gate_stage_1": NIR_EFFICIENCY_THRESHOLD_STAGE_1,
     "target_efficiency_gate_stage_2": NIR_EFFICIENCY_THRESHOLD_STAGE_2,
     "target_efficiency_gate_stage_3": NIR_EFFICIENCY_THRESHOLD_STAGE_3,
-    "embed_dim": EMBED_DIM,
-    "num_heads": NUM_HEADS,
     "num_layers": NUM_LAYERS,
-    "mlp_hidden_dim": MLP_HIDDEN_DIM,
-    "patch_size": PATCH_SIZE,
+    "width": WIDTH,
+    "gcnn_equal_amplitudes": True,
+    "gcnn_activation": "reim_selu",
     "permutation": list(range(graph.n_nodes)),
     "outputs": [str(result["log_file"])],
     "history_file": str(history_file),
