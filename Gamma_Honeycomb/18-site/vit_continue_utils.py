@@ -104,6 +104,75 @@ def find_latest_checkpoint(
     )
 
 
+def _first_existing_path(candidates: list[str | Path | None]) -> Path | None:
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser().resolve()
+        if path.is_file():
+            return path
+    return None
+
+
+def find_latest_training_state(
+    summary: dict, run_dir: Path, preferred_mode: str | None = None
+) -> Path | None:
+    if is_continuation_summary(summary):
+        mode = select_continuation_mode(summary, preferred_mode)
+        run_summary = summary["runs"][mode]
+        path = _first_existing_path(
+            [
+                run_summary.get("training_state_file"),
+                run_summary.get("latest_training_state_file"),
+                summary.get("training_state_file"),
+                summary.get("latest_training_state_file"),
+            ]
+        )
+        if path is not None:
+            return path
+    else:
+        path = _first_existing_path(
+            [
+                summary.get("training_state_file"),
+                summary.get("latest_training_state_file"),
+            ]
+        )
+        if path is not None:
+            return path
+
+    candidates = sorted(run_dir.glob("*_training_state.mpack"), key=lambda p: p.stat().st_mtime)
+    if candidates:
+        return candidates[-1].resolve()
+    return None
+
+
+def find_best_training_state(
+    summary: dict, run_dir: Path, preferred_mode: str | None = None
+) -> Path | None:
+    if is_continuation_summary(summary):
+        mode = select_continuation_mode(summary, preferred_mode)
+        run_summary = summary["runs"][mode]
+        path = _first_existing_path(
+            [
+                run_summary.get("best_training_state_file"),
+                summary.get("best_training_state_file"),
+            ]
+        )
+        if path is not None:
+            return path
+    else:
+        path = _first_existing_path([summary.get("best_training_state_file")])
+        if path is not None:
+            return path
+
+    candidates = sorted(
+        run_dir.glob("*_training_state_best.mpack"), key=lambda p: p.stat().st_mtime
+    )
+    if candidates:
+        return candidates[-1].resolve()
+    return None
+
+
 def read_energy_trace(log_path: Path) -> list[float]:
     if not log_path.is_file():
         return []

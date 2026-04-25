@@ -98,7 +98,9 @@ TARGET_SR_DIAG_SHIFT_STAGE_1 = 1e-3
 TARGET_SR_DIAG_SHIFT_STAGE_2 = 1e-4
 TARGET_SR_DIAG_SHIFT_STAGE_3 = 1e-5
 TARGET_SR_PROJ_REG = None
-TARGET_SR_MOMENTUM = 0.9
+TARGET_SR_MOMENTUM_STAGE_1 = 0.9
+TARGET_SR_MOMENTUM_STAGE_2 = 0.9
+TARGET_SR_MOMENTUM_STAGE_3 = 0.0
 TARGET_SR_MODE = "complex"
 
 TRAIN_LR_BOUNDARY_1 = TRAIN_LR_STAGE_1_ITERS
@@ -293,6 +295,14 @@ def current_proposal_steps(step):
     return NIR_PROPOSAL_STEPS_STAGE_3
 
 
+def current_target_sr_momentum(step):
+    if step < TRAIN_LR_BOUNDARY_1:
+        return TARGET_SR_MOMENTUM_STAGE_1
+    if step < TRAIN_LR_BOUNDARY_2:
+        return TARGET_SR_MOMENTUM_STAGE_2
+    return TARGET_SR_MOMENTUM_STAGE_3
+
+
 def build_target_update_state():
     kind = TARGET_PRECONDITIONER.lower()
     if kind == "sr":
@@ -336,7 +346,7 @@ def compute_target_direction(vstate, hamiltonian, target_update_state, step):
             solver_fn=nk.optimizer.solver.cholesky,
             mode=target_sr_mode,
             proj_reg=_schedule_value(TARGET_SR_PROJ_REG, step),
-            momentum=_schedule_value(TARGET_SR_MOMENTUM, step),
+            momentum=current_target_sr_momentum(step),
             old_updates=target_update_state["old_updates"],
             chunk_size=CHUNK_SIZE,
         )
@@ -699,7 +709,9 @@ summary = {
     "target_sr_diag_shift_stage_2": TARGET_SR_DIAG_SHIFT_STAGE_2,
     "target_sr_diag_shift_stage_3": TARGET_SR_DIAG_SHIFT_STAGE_3,
     "target_sr_proj_reg": TARGET_SR_PROJ_REG,
-    "target_sr_momentum": TARGET_SR_MOMENTUM,
+    "target_sr_momentum_stage_1": TARGET_SR_MOMENTUM_STAGE_1,
+    "target_sr_momentum_stage_2": TARGET_SR_MOMENTUM_STAGE_2,
+    "target_sr_momentum_stage_3": TARGET_SR_MOMENTUM_STAGE_3,
     "target_efficiency_gate_stage_1": NIR_EFFICIENCY_THRESHOLD_STAGE_1,
     "target_efficiency_gate_stage_2": NIR_EFFICIENCY_THRESHOLD_STAGE_2,
     "target_efficiency_gate_stage_3": NIR_EFFICIENCY_THRESHOLD_STAGE_3,

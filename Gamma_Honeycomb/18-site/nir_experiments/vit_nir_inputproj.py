@@ -27,6 +27,17 @@ if str(PARENT_18) not in sys.path:
     sys.path.insert(0, str(PARENT_18))
 
 from hamiltonian import gamma_hamiltonian
+from nir_resume_utils import load_training_state, save_training_state
+from vit_continue_utils import (
+    collect_previous_energy,
+    find_best_training_state,
+    find_latest_checkpoint,
+    find_latest_training_state,
+    load_summary,
+    make_continuation_dir,
+    require_summary,
+    resolve_source_run_dir,
+)
 from vit_symm_model import CanonicalRepresentativeHoneycombViT
 
 print(jax.devices())
@@ -146,6 +157,11 @@ PROPOSAL_LR_SCHEDULE = optax.join_schedules(
 TARGET_CHAIN_LENGTH = 128
 
 TODAY = date.today().isoformat()
+RESUME_SOURCE_SUMMARY = os.environ.get("NIR_RESUME_SOURCE_SUMMARY", "").strip()
+RESUME_MODE = os.environ.get("NIR_RESUME_MODE", "latest").strip().lower()
+RESUME_ADDITIONAL_ITERS = int(
+    os.environ.get("NIR_RESUME_ADDITIONAL_ITERS", str(NUM_ITERS_TOTAL))
+)
 
 JOB_BASE = (
     f"{NUM_SITES}-site_"
@@ -154,12 +170,22 @@ JOB_BASE = (
     f"{PATCH_SIZE}_patches_"
     f"identity_"
     f"{NUM_SAMPLES_STAGE_1}to{NUM_SAMPLES_STAGE_3}_samples_"
-    f"{TODAY}_Gamma_ViT_NIR_inputproj"
+    f"{TODAY}_Gamma_ViT_NIR_inputproj_multiphase"
 )
-
-RUNS_DIR = THIS_DIR / "runs" / TODAY
-RUN_DIR = RUNS_DIR / JOB_BASE
-RUN_DIR.mkdir(parents=True, exist_ok=True)
+resume_summary_path = None
+resume_summary = None
+resume_source_run_dir = None
+if RESUME_SOURCE_SUMMARY:
+    if RESUME_MODE not in {"latest", "best"}:
+        raise ValueError("NIR_RESUME_MODE must be either 'latest' or 'best'.")
+    resume_summary_path = require_summary(RESUME_SOURCE_SUMMARY)
+    resume_summary = load_summary(resume_summary_path)
+    resume_source_run_dir = resolve_source_run_dir(resume_summary, resume_summary_path)
+    RUN_DIR = make_continuation_dir(resume_source_run_dir, "nir_resume")
+else:
+    RUNS_DIR = THIS_DIR / "runs" / TODAY
+    RUN_DIR = RUNS_DIR / JOB_BASE
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
 
 os.environ["NETKET_DEBUG"] = "1"
 
@@ -274,6 +300,28 @@ def save_proposal_state(path, proposal_params, proposal_opt_state):
     }
     with open(path, "wb") as f:
         f.write(serialization.to_bytes(state))
+
+
+def load_checkpoint_variables(path, variables_template):
+    with open(path, "rb") as f:
+        return serialization.from_bytes(variables_template, f.read())
+
+
+def load_proposal_state(path, proposal_params, proposal_opt_state, proposal_optimizer):
+    with open(path, "rb") as f:
+        proposal_bytes = f.read()
+    proposal_template = {
+        "params": proposal_params,
+        "opt_state": proposal_opt_state,
+    }
+    try:
+        proposal_state = serialization.from_bytes(proposal_template, proposal_bytes)
+        return proposal_state["params"], proposal_state["opt_state"]
+    except ValueError:
+        raw_state = serialization.msgpack_restore(proposal_bytes)
+        proposal_params = serialization.from_state_dict(proposal_params, raw_state["params"])
+        proposal_opt_state = proposal_optimizer.init(proposal_params)
+        return proposal_params, proposal_opt_state
 
 
 def target_log_probs(vstate, sigma):
@@ -485,29 +533,48 @@ def run_nir_stage(
     proposal_params,
     proposal_opt_state,
     proposal_optimizer,
+    start_iteration=0,
+    initial_target_opt_state=None,
+    initial_target_update_state=None,
+    initial_rng=None,
+    initial_best_energy=None,
+    initial_best_energy_distance=None,
+    initial_best_iteration=None,
 ):
     params = vstate.parameters
-    opt_state = optimizer.init(params)
-    target_update_state = build_target_update_state()
-    rng = fresh_key()
+    opt_state = (
+        optimizer.init(params) if initial_target_opt_state is None else initial_target_opt_state
+    )
+    target_update_state = (
+        build_target_update_state()
+        if initial_target_update_state is None
+        else initial_target_update_state
+    )
+    rng = fresh_key() if initial_rng is None else initial_rng
     history = []
-    best_energy = None
-    best_energy_distance = None
-    best_iteration = None
+    best_energy = initial_best_energy
+    best_energy_distance = initial_best_energy_distance
+    best_iteration = initial_best_iteration
     best_params_file = f"{out_prefix}_best.mpack"
     best_proposal_state_file = f"{out_prefix}_proposal_best.mpack"
+    training_state_file = f"{out_prefix}_training_state.mpack"
+    best_training_state_file = f"{out_prefix}_training_state_best.mpack"
     logger = nk.logging.JsonLog(
         out_prefix,
         write_every=WRITE_EVERY,
         save_params_every=SAVE_PARAMS_EVERY,
         save_params=True,
     )
-    current_phase = current_learn_phase(0)
-    current_sample_count = current_num_samples(0)
+    current_phase = current_learn_phase(start_iteration)
+    current_sample_count = current_num_samples(start_iteration)
+    if start_iteration != 0 or vstate.n_samples != current_sample_count:
+        vstate = rebuild_vstate_for_stage(vstate, current_phase, current_sample_count)
+        params = vstate.parameters
 
     for it in range(n_iter):
-        learn_phase = current_learn_phase(it)
-        n_samples = current_num_samples(it)
+        global_it = start_iteration + it
+        learn_phase = current_learn_phase(global_it)
+        n_samples = current_num_samples(global_it)
         if learn_phase != current_phase or n_samples != current_sample_count:
             vstate = rebuild_vstate_for_stage(vstate, learn_phase, n_samples)
             params = vstate.parameters
@@ -520,14 +587,14 @@ def run_nir_stage(
             proposal_opt_state,
             proposal_optimizer,
             rng,
-            step=it,
+            step=global_it,
         )
         last_round = nir_summary["rounds"][-1]
         target_update_applied = bool(last_round["meets_efficiency_threshold"])
         inject_external_samples(vstate, resampled)
         if target_update_applied:
             stats, dp, target_update_state = compute_target_direction(
-                vstate, hamiltonian, target_update_state, it
+                vstate, hamiltonian, target_update_state, global_it
             )
             dp = jax.tree.map(
                 lambda update, param: jnp.asarray(update, dtype=param.dtype), dp, params
@@ -544,7 +611,7 @@ def run_nir_stage(
         energy_distance = abs(energy - EXACT_GROUND_STATE_ENERGY)
         history.append(
             {
-                "iteration": it + 1,
+                "iteration": global_it + 1,
                 "energy": energy,
                 "energy_distance_to_exact": energy_distance,
                 "learn_phase": bool(current_phase),
@@ -555,12 +622,25 @@ def run_nir_stage(
         if best_energy_distance is None or energy_distance < best_energy_distance:
             best_energy = energy
             best_energy_distance = energy_distance
-            best_iteration = it + 1
+            best_iteration = global_it + 1
             with open(best_params_file, "wb") as f:
                 f.write(serialization.to_bytes(vstate.variables))
             save_proposal_state(best_proposal_state_file, proposal_params, proposal_opt_state)
+            save_training_state(
+                best_training_state_file,
+                variables=vstate.variables,
+                proposal_params=proposal_params,
+                proposal_opt_state=proposal_opt_state,
+                target_opt_state=opt_state,
+                target_update_state=target_update_state,
+                rng=rng,
+                completed_iterations=global_it + 1,
+                best_energy=best_energy,
+                best_energy_distance_to_exact=best_energy_distance,
+                best_iteration=best_iteration,
+            )
         logger(
-            it,
+            global_it,
             {
                 "Energy": stats,
                 "NIR": {
@@ -574,9 +654,23 @@ def run_nir_stage(
             },
             variational_state=vstate,
         )
+        if ((it + 1) % SAVE_PARAMS_EVERY == 0) or (it + 1 == n_iter):
+            save_training_state(
+                training_state_file,
+                variables=vstate.variables,
+                proposal_params=proposal_params,
+                proposal_opt_state=proposal_opt_state,
+                target_opt_state=opt_state,
+                target_update_state=target_update_state,
+                rng=rng,
+                completed_iterations=global_it + 1,
+                best_energy=best_energy,
+                best_energy_distance_to_exact=best_energy_distance,
+                best_iteration=best_iteration,
+            )
         if (it + 1) % max(1, LOG_STEP_SIZE) == 0:
             print(
-                f"it={it + 1:5d} "
+                f"it={global_it + 1:5d} "
                 f"Energy={energy:.8f} "
                 f"ESS={last_round['ess']:.2f} "
                 f"Eff={last_round['efficiency']:.4f} "
@@ -594,13 +688,17 @@ def run_nir_stage(
         "best_iteration": best_iteration,
         "best_params_file": best_params_file,
         "best_proposal_state_file": best_proposal_state_file,
+        "training_state_file": training_state_file,
+        "best_training_state_file": best_training_state_file,
         "proposal_params": proposal_params,
         "proposal_opt_state": proposal_opt_state,
         "log_file": out_prefix + ".log",
+        "completed_iterations": start_iteration + n_iter,
     }
 
 
-print(f"\n=== NIR training: {NUM_ITERS_TOTAL} iterations ===\n")
+run_iterations = RESUME_ADDITIONAL_ITERS if resume_summary_path is not None else NUM_ITERS_TOTAL
+print(f"\n=== NIR training: {run_iterations} iterations ===\n")
 
 model = build_model()
 sampler = make_metropolis_local(hi, NUM_SAMPLES_STAGE_1)
@@ -623,6 +721,79 @@ init_sigma = jnp.ones((4, NUM_SITES), dtype=jnp.float64)
 proposal_params = proposal_model.init(fresh_key(), init_sigma)["params"]
 proposal_optimizer = optax.adam(PROPOSAL_LR_SCHEDULE)
 proposal_opt_state = proposal_optimizer.init(proposal_params)
+target_optimizer = optax.sgd(learning_rate=TRAIN_LR_SCHEDULE)
+
+resume_training_state_path = None
+resume_checkpoint_path = None
+resume_proposal_state_path = None
+start_iteration = 0
+initial_target_opt_state = None
+initial_target_update_state = None
+initial_rng = None
+initial_best_energy = None
+initial_best_energy_distance = None
+initial_best_iteration = None
+
+if resume_summary_path is not None:
+    print("Resume source summary:", resume_summary_path)
+    print("Resume source run dir:", resume_source_run_dir)
+    if RESUME_MODE == "best":
+        resume_training_state_path = find_best_training_state(resume_summary, resume_source_run_dir)
+    else:
+        resume_training_state_path = find_latest_training_state(
+            resume_summary, resume_source_run_dir
+        )
+
+    if resume_training_state_path is not None:
+        resume_template = {
+            "variables": vstate.variables,
+            "proposal_params": proposal_params,
+            "proposal_opt_state": proposal_opt_state,
+            "target_opt_state": target_optimizer.init(vstate.parameters),
+            "target_update_state": build_target_update_state(),
+            "rng": fresh_key(),
+            "completed_iterations": 0,
+            "best_energy": None,
+            "best_energy_distance_to_exact": None,
+            "best_iteration": None,
+        }
+        resume_state = load_training_state(resume_training_state_path, resume_template)
+        vstate.variables = resume_state["variables"]
+        proposal_params = resume_state["proposal_params"]
+        proposal_opt_state = resume_state["proposal_opt_state"]
+        initial_target_opt_state = resume_state["target_opt_state"]
+        initial_target_update_state = resume_state["target_update_state"]
+        initial_rng = resume_state["rng"]
+        start_iteration = int(resume_state["completed_iterations"])
+        initial_best_energy = resume_state["best_energy"]
+        initial_best_energy_distance = resume_state["best_energy_distance_to_exact"]
+        initial_best_iteration = resume_state["best_iteration"]
+        print("Loaded full training state:", resume_training_state_path)
+        print("Resuming from completed iteration:", start_iteration)
+    else:
+        resume_checkpoint_path = find_latest_checkpoint(resume_summary, resume_source_run_dir)
+        vstate.variables = load_checkpoint_variables(resume_checkpoint_path, vstate.variables)
+        if RESUME_MODE == "best":
+            proposal_state_path_str = resume_summary.get("best_proposal_state_file")
+        else:
+            proposal_state_path_str = resume_summary.get("proposal_state_file")
+        if proposal_state_path_str:
+            resume_proposal_state_path = Path(proposal_state_path_str).expanduser().resolve()
+            if resume_proposal_state_path.is_file():
+                proposal_params, proposal_opt_state = load_proposal_state(
+                    resume_proposal_state_path,
+                    proposal_params,
+                    proposal_opt_state,
+                    proposal_optimizer,
+                )
+        start_iteration = len(
+            collect_previous_energy(resume_summary, summary_path=resume_summary_path)
+        )
+        initial_best_energy = resume_summary.get("best_energy_seen")
+        initial_best_energy_distance = resume_summary.get("best_energy_distance_to_exact")
+        initial_best_iteration = resume_summary.get("best_energy_iteration")
+        print("Loaded checkpoint-only resume state:", resume_checkpoint_path)
+        print("Recovered iteration count from prior logs:", start_iteration)
 
 print("Parameters:", vstate.n_parameters)
 
@@ -631,16 +802,24 @@ result = run_nir_stage(
     out_prefix=out_prefix,
     vstate=vstate,
     hamiltonian=ha,
-    n_iter=NUM_ITERS_TOTAL,
-    optimizer=optax.sgd(learning_rate=TRAIN_LR_SCHEDULE),
+    n_iter=run_iterations,
+    optimizer=target_optimizer,
     proposal_model=proposal_model,
     proposal_params=proposal_params,
     proposal_opt_state=proposal_opt_state,
     proposal_optimizer=proposal_optimizer,
+    start_iteration=start_iteration,
+    initial_target_opt_state=initial_target_opt_state,
+    initial_target_update_state=initial_target_update_state,
+    initial_rng=initial_rng,
+    initial_best_energy=initial_best_energy,
+    initial_best_energy_distance=initial_best_energy_distance,
+    initial_best_iteration=initial_best_iteration,
 )
 
 proposal_state_file = Path(f"{out_prefix}_proposal_state.mpack")
 save_proposal_state(proposal_state_file, result["proposal_params"], result["proposal_opt_state"])
+training_state_file = Path(result["training_state_file"])
 
 history_file = Path(f"{out_prefix}.json")
 with open(history_file, "w") as f:
@@ -655,6 +834,8 @@ print("Best NIR iteration:", int(result["best_iteration"]))
 print("Best params file:", result["best_params_file"])
 print("Proposal state file:", proposal_state_file)
 print("Best proposal state file:", result["best_proposal_state_file"])
+print("Training state file:", training_state_file)
+print("Best training state file:", result["best_training_state_file"])
 print()
 
 energy = [row["energy"] for row in result["history"]]
@@ -706,6 +887,8 @@ summary = {
     "num_samples_stage_2": NUM_SAMPLES_STAGE_2,
     "num_samples_stage_3": NUM_SAMPLES_STAGE_3,
     "num_iters_total": NUM_ITERS_TOTAL,
+    "run_iterations": run_iterations,
+    "completed_iterations": int(result["completed_iterations"]),
     "train_lr_stage_1": TRAIN_LR_STAGE_1,
     "train_lr_stage_2": TRAIN_LR_STAGE_2,
     "train_lr_stage_3": TRAIN_LR_STAGE_3,
@@ -737,10 +920,23 @@ summary = {
     "mean_energy_file": str(mean_energy_file),
     "plot_file": str(plot_file),
     "best_params_file": str(result["best_params_file"]),
+    "training_state_file": str(training_state_file),
+    "best_training_state_file": str(result["best_training_state_file"]),
     "proposal_state_file": str(proposal_state_file),
     "best_proposal_state_file": str(result["best_proposal_state_file"]),
     "exact_ground_state_energy": EXACT_GROUND_STATE_ENERGY,
 }
+
+if resume_summary_path is not None:
+    summary["source_summary_file"] = str(resume_summary_path)
+    summary["resume_mode"] = RESUME_MODE
+    summary["resume_start_iteration"] = int(start_iteration)
+    if resume_training_state_path is not None:
+        summary["resume_source_training_state_file"] = str(resume_training_state_path)
+    if resume_checkpoint_path is not None:
+        summary["resume_source_checkpoint_file"] = str(resume_checkpoint_path)
+    if resume_proposal_state_path is not None:
+        summary["resume_source_proposal_state_file"] = str(resume_proposal_state_path)
 
 if energy:
     summary["final_energy"] = float(energy[-1])

@@ -1,7 +1,7 @@
 import os
 import json
 import sys
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 from flax import serialization
@@ -13,7 +13,6 @@ if not SHOW_PLOTS:
 import jax
 import netket as nk
 import optax
-from netket._src.ngd.sr_srt_common import srt as compute_minsr_direction
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -28,15 +27,6 @@ if str(PARENT_18) not in sys.path:
 
 from hamiltonian import gamma_hamiltonian
 from vit_symm_model import CanonicalRepresentativeHoneycombViT
-from vit_continue_utils import (
-    collect_previous_energy,
-    find_latest_checkpoint,
-    load_summary,
-    make_continuation_dir,
-    require_summary,
-    resolve_base_summary,
-    resolve_source_run_dir,
-)
 
 print(jax.devices())
 jax.config.update("jax_enable_x64", True)
@@ -56,102 +46,104 @@ from proposal_network import (
     train_proposal_step,
 )
 
-# ============================================================
-# USER OPTIONS
-# ============================================================
-SOURCE_SUMMARY_FILE = os.environ.get("NIR_CONTINUE_SOURCE_SUMMARY", "")
+LEARN_PHASE_STAGE_1 = False
+LEARN_PHASE_STAGE_2 = True
+LEARN_PHASE_STAGE_3 = True
 
-USE_BEST_CHECKPOINT = True
-CONTINUE_ITERS = 500
-CONTINUE_TAG = "nir_continue_single_refinement_stage"
-CONTINUE_NUM_SAMPLES = 3 * 2**11
+NUM_SITES = 18
 
-CONTINUE_LR = 1e-3
-CONTINUE_PROPOSAL_WARMUP_ITERS = 100
+NUM_SAMPLES_STAGE_1 = 3 * 2**9
+NUM_SAMPLES_STAGE_2 = NUM_SAMPLES_STAGE_1
+NUM_SAMPLES_STAGE_3 = 3 * 2**10
+NUM_ITERS_TOTAL = 2000
 
-# Proposal network settings for continuation.
-# These use a short proposal-recovery warmup followed by stricter refinement.
+EMBED_DIM = 24
+NUM_HEADS = 8
+NUM_LAYERS = 2
+PATCH_SIZE = 2
+MLP_HIDDEN_DIM = 2 * EMBED_DIM
+CHUNK_SIZE = 512
+
+TRAIN_LR_STAGE_1 = 1e-2
+TRAIN_LR_STAGE_2 = 1e-2
+TRAIN_LR_STAGE_3 = 5e-3
+TRAIN_LR_STAGE_1_ITERS = 50
+TRAIN_LR_STAGE_2_ITERS = 600
+ADAM_CLIP_NORM = 1.0
+
+LOG_STEP_SIZE = 1
+WRITE_EVERY = 1
+SAVE_PARAMS_EVERY = 25
+
+# ---------- NIR proposal network ----------
 NIR_PROPOSAL_BATCH = 3 * 2**10
 NIR_MAX_PROPOSAL_BATCHES = 8
 NIR_MAX_ADAPTIVE_ROUNDS = 4
 NIR_ESS_THRESHOLD_FRAC = 0.4
-NIR_EFFICIENCY_THRESHOLD_WARMUP = 0.08
-NIR_EFFICIENCY_THRESHOLD_REFINEMENT = 0.20
-NIR_PROPOSAL_LR_WARMUP = 3e-3
-NIR_PROPOSAL_LR_REFINEMENT = 3e-4
-NIR_PROPOSAL_STEPS_WARMUP = 2
-NIR_PROPOSAL_STEPS_REFINEMENT = 1
+NIR_EFFICIENCY_THRESHOLD_STAGE_1 = 0.15
+NIR_EFFICIENCY_THRESHOLD_STAGE_2 = 0.15
+NIR_EFFICIENCY_THRESHOLD_STAGE_3 = 0.20
+NIR_PROPOSAL_LR_STAGE_1 = 3e-3
+NIR_PROPOSAL_LR_STAGE_2 = 3e-3
+NIR_PROPOSAL_LR_STAGE_3 = 3e-4
+NIR_PROPOSAL_STEPS_STAGE_1 = 4
+NIR_PROPOSAL_STEPS_STAGE_2 = 2
+NIR_PROPOSAL_STEPS_STAGE_3 = 1
 NIR_PROPOSAL_EMBED_DIM = 24
 NIR_PROPOSAL_HEADS = 12
 NIR_PROPOSAL_LAYERS = 2
 NIR_PROPOSAL_MLP = 2 * NIR_PROPOSAL_EMBED_DIM
 NIR_PROB_FLOOR = 1e-6
 
-# ---------- NQS target update ----------
-TARGET_PRECONDITIONER = "minsr"
-TARGET_SR_DIAG_SHIFT = 1e-5
-TARGET_SR_PROJ_REG = None
-TARGET_SR_MOMENTUM = 0.0
-TARGET_SR_MODE = "complex"
+TRAIN_LR_BOUNDARY_1 = TRAIN_LR_STAGE_1_ITERS
+TRAIN_LR_BOUNDARY_2 = TRAIN_LR_STAGE_1_ITERS + TRAIN_LR_STAGE_2_ITERS
+
+TRAIN_LR_SCHEDULE = optax.join_schedules(
+    schedules=[
+        optax.constant_schedule(TRAIN_LR_STAGE_1),
+        optax.constant_schedule(TRAIN_LR_STAGE_2),
+        optax.constant_schedule(TRAIN_LR_STAGE_3),
+    ],
+    boundaries=[
+        TRAIN_LR_BOUNDARY_1,
+        TRAIN_LR_BOUNDARY_2,
+    ],
+)
 
 PROPOSAL_LR_SCHEDULE = optax.join_schedules(
     schedules=[
-        optax.constant_schedule(NIR_PROPOSAL_LR_WARMUP),
-        optax.constant_schedule(NIR_PROPOSAL_LR_REFINEMENT),
+        optax.constant_schedule(NIR_PROPOSAL_LR_STAGE_1),
+        optax.constant_schedule(NIR_PROPOSAL_LR_STAGE_2),
+        optax.constant_schedule(NIR_PROPOSAL_LR_STAGE_3),
     ],
-    boundaries=[CONTINUE_PROPOSAL_WARMUP_ITERS],
+    boundaries=[
+        TRAIN_LR_BOUNDARY_1,
+        TRAIN_LR_BOUNDARY_2,
+    ],
 )
 
 TARGET_CHAIN_LENGTH = 128
-CHUNK_SIZE = 64
-LOG_STEP_SIZE = 1
-WRITE_EVERY = 1
-SAVE_PARAMS_EVERY = 25
 
-source_summary_path = require_summary(SOURCE_SUMMARY_FILE)
-source_summary = load_summary(source_summary_path)
-base_summary, _base_summary_path = resolve_base_summary(source_summary, source_summary_path)
-source_run_dir = resolve_source_run_dir(source_summary, source_summary_path)
-continue_dir = make_continuation_dir(source_run_dir, "nir_continue")
+TODAY = date.today().isoformat()
 
-if USE_BEST_CHECKPOINT:
-    best_params = source_summary.get("best_params_file") or base_summary.get("best_params_file")
-    if not best_params:
-        raise FileNotFoundError("No best_params_file found in source summary.")
-    checkpoint_path = Path(best_params).expanduser().resolve()
-else:
-    checkpoint_path = find_latest_checkpoint(source_summary, source_run_dir)
-
-if USE_BEST_CHECKPOINT:
-    proposal_state_path_str = source_summary.get("best_proposal_state_file") or base_summary.get(
-        "best_proposal_state_file"
-    )
-else:
-    proposal_state_path_str = source_summary.get("proposal_state_file") or base_summary.get(
-        "proposal_state_file"
-    )
-proposal_state_path = (
-    Path(proposal_state_path_str).expanduser().resolve()
-    if proposal_state_path_str
-    else None
+JOB_BASE = (
+    f"{NUM_SITES}-site_"
+    f"{NUM_LAYERS}_layers_"
+    f"{NUM_HEADS}_heads_"
+    f"{PATCH_SIZE}_patches_"
+    f"identity_"
+    f"{NUM_SAMPLES_STAGE_1}to{NUM_SAMPLES_STAGE_3}_samples_"
+    f"{TODAY}_Gamma_ViT_NIR_inputproj_Adam"
 )
 
-NUM_SITES = int(base_summary["num_sites"])
-NUM_SAMPLES = int(CONTINUE_NUM_SAMPLES)
-LEARN_PHASE = bool(base_summary.get("learn_phase", True))
-EMBED_DIM = int(base_summary["embed_dim"])
-NUM_HEADS = int(base_summary["num_heads"])
-NUM_LAYERS = int(base_summary["num_layers"])
-MLP_HIDDEN_DIM = int(base_summary["mlp_hidden_dim"])
-PATCH_SIZE = int(base_summary["patch_size"])
+RUNS_DIR = THIS_DIR / "runs" / TODAY
+RUN_DIR = RUNS_DIR / JOB_BASE
+RUN_DIR.mkdir(parents=True, exist_ok=True)
 
-print("Source summary:", source_summary_path)
-print("Source run dir:", source_run_dir)
-print("Continuation dir:", continue_dir)
-print("Checkpoint:", checkpoint_path)
-print("Proposal state:", proposal_state_path if proposal_state_path is not None else "fresh init")
+os.environ["NETKET_DEBUG"] = "1"
 
 graph, _symm_group, hi, ha = gamma_hamiltonian(NUM_SITES)
+
 sp_h = ha.to_sparse()
 eig_vals, _ = eigsh(sp_h, k=2, which="SA")
 EXACT_GROUND_STATE_ENERGY = float(eig_vals[0])
@@ -177,6 +169,9 @@ def symmetry_inverse_perm(g, n_sites):
 
 symmetry_perms = tuple(symmetry_inverse_perm(g, graph.n_nodes) for g in _symm_group)
 
+print("Symmetry count:", len(symmetry_perms))
+print("Run directory:", RUN_DIR)
+
 
 def make_metropolis_local(hilbert, n_samples):
     n_chains = max(1, n_samples // TARGET_CHAIN_LENGTH)
@@ -195,10 +190,70 @@ def build_model():
         num_layers=NUM_LAYERS,
         mlp_hidden_dim=MLP_HIDDEN_DIM,
         patch_size=PATCH_SIZE,
-        learn_phase=LEARN_PHASE,
+        learn_phase=LEARN_PHASE_STAGE_1,
         symmetries=symmetry_perms,
         permutation=tuple(range(graph.n_nodes)),
     )
+
+
+def build_model_for_phase(learn_phase):
+    return CanonicalRepresentativeHoneycombViT(
+        embed_dim=EMBED_DIM,
+        num_heads=NUM_HEADS,
+        num_layers=NUM_LAYERS,
+        mlp_hidden_dim=MLP_HIDDEN_DIM,
+        patch_size=PATCH_SIZE,
+        learn_phase=learn_phase,
+        symmetries=symmetry_perms,
+        permutation=tuple(range(graph.n_nodes)),
+    )
+
+
+def current_learn_phase(step):
+    if step < TRAIN_LR_BOUNDARY_1:
+        return LEARN_PHASE_STAGE_1
+    if step < TRAIN_LR_BOUNDARY_2:
+        return LEARN_PHASE_STAGE_2
+    return LEARN_PHASE_STAGE_3
+
+
+def current_num_samples(step):
+    if step < TRAIN_LR_BOUNDARY_1:
+        return NUM_SAMPLES_STAGE_1
+    if step < TRAIN_LR_BOUNDARY_2:
+        return NUM_SAMPLES_STAGE_2
+    return NUM_SAMPLES_STAGE_3
+
+
+def rebuild_vstate_for_stage(vstate, learn_phase, n_samples):
+    sampler = make_metropolis_local(hi, n_samples)
+    rebuilt = nk.vqs.MCState(
+        sampler=sampler,
+        model=build_model_for_phase(learn_phase),
+        n_samples=n_samples,
+        variables=vstate.variables,
+        chunk_size=CHUNK_SIZE,
+    )
+    if (
+        hasattr(vstate, "_samples")
+        and getattr(vstate, "_samples", None) is not None
+        and vstate.n_samples == n_samples
+    ):
+        rebuilt._samples = vstate._samples
+    return rebuilt
+
+
+def run_path(stem: str) -> str:
+    return str(RUN_DIR / stem)
+
+
+def save_proposal_state(path, proposal_params, proposal_opt_state):
+    state = {
+        "params": proposal_params,
+        "opt_state": proposal_opt_state,
+    }
+    with open(path, "wb") as f:
+        f.write(serialization.to_bytes(state))
 
 
 def target_log_probs(vstate, sigma):
@@ -213,73 +268,25 @@ def inject_external_samples(vstate, samples):
     return reshaped
 
 
-def _schedule_value(value, step):
-    return value(step) if callable(value) else value
-
-
 def current_efficiency_threshold(step):
-    if step < CONTINUE_PROPOSAL_WARMUP_ITERS:
-        return NIR_EFFICIENCY_THRESHOLD_WARMUP
-    return NIR_EFFICIENCY_THRESHOLD_REFINEMENT
+    if step < TRAIN_LR_BOUNDARY_1:
+        return NIR_EFFICIENCY_THRESHOLD_STAGE_1
+    if step < TRAIN_LR_BOUNDARY_2:
+        return NIR_EFFICIENCY_THRESHOLD_STAGE_2
+    return NIR_EFFICIENCY_THRESHOLD_STAGE_3
 
 
 def current_proposal_steps(step):
-    if step < CONTINUE_PROPOSAL_WARMUP_ITERS:
-        return NIR_PROPOSAL_STEPS_WARMUP
-    return NIR_PROPOSAL_STEPS_REFINEMENT
+    if step < TRAIN_LR_BOUNDARY_1:
+        return NIR_PROPOSAL_STEPS_STAGE_1
+    if step < TRAIN_LR_BOUNDARY_2:
+        return NIR_PROPOSAL_STEPS_STAGE_2
+    return NIR_PROPOSAL_STEPS_STAGE_3
 
 
-def build_target_update_state():
-    kind = TARGET_PRECONDITIONER.lower()
-    if kind == "sr":
-        return {
-            "kind": kind,
-            "preconditioner": nk.optimizer.SR(diag_shift=TARGET_SR_DIAG_SHIFT),
-            "old_updates": None,
-            "info": None,
-        }
-    if kind == "minsr":
-        return {
-            "kind": kind,
-            "preconditioner": None,
-            "old_updates": None,
-            "info": None,
-        }
-    raise ValueError(f"Unsupported TARGET_PRECONDITIONER: {TARGET_PRECONDITIONER}")
-
-
-def compute_target_direction(vstate, hamiltonian, target_update_state, step):
-    kind = target_update_state["kind"]
-    if kind == "sr":
-        stats, grad = vstate.expect_and_grad(hamiltonian)
-        dp = target_update_state["preconditioner"](vstate, grad, step)
-        info = getattr(target_update_state["preconditioner"], "info", None)
-        target_update_state["info"] = info
-        return stats, dp, target_update_state
-
-    if kind == "minsr":
-        local_energies = vstate.local_estimators(hamiltonian, chunk_size=CHUNK_SIZE)
-        stats = nk.stats.statistics(local_energies)
-        samples = jax.lax.collapse(vstate.samples, 0, vstate.samples.ndim - 1)
-        dp, old_updates, info = compute_minsr_direction(
-            vstate._apply_fun,
-            local_energies,
-            vstate.parameters,
-            vstate.model_state,
-            samples,
-            diag_shift=_schedule_value(TARGET_SR_DIAG_SHIFT, step),
-            solver_fn=nk.optimizer.solver.cholesky,
-            mode=TARGET_SR_MODE,
-            proj_reg=_schedule_value(TARGET_SR_PROJ_REG, step),
-            momentum=_schedule_value(TARGET_SR_MOMENTUM, step),
-            old_updates=target_update_state["old_updates"],
-            chunk_size=CHUNK_SIZE,
-        )
-        target_update_state["old_updates"] = old_updates
-        target_update_state["info"] = info
-        return stats, dp, target_update_state
-
-    raise ValueError(f"Unsupported TARGET_PRECONDITIONER state: {kind}")
+def compute_target_grad(vstate, hamiltonian):
+    stats, grad = vstate.expect_and_grad(hamiltonian)
+    return stats, grad
 
 
 def sample_until_ess(vstate, proposal_model, proposal_params, rng, *, target_n_samples):
@@ -341,6 +348,8 @@ def run_adaptive_nir_round(
     params = proposal_params
     opt_state = proposal_opt_state
     final_resampled = None
+    eff_threshold = current_efficiency_threshold(step)
+    proposal_steps = current_proposal_steps(step)
 
     for round_idx in range(NIR_MAX_ADAPTIVE_ROUNDS):
         all_samples, all_log_target, all_log_proposal, weights, rng = sample_until_ess(
@@ -358,8 +367,6 @@ def run_adaptive_nir_round(
 
         train_batch = jnp.asarray(resampled)
         last_loss = None
-        proposal_steps = current_proposal_steps(step)
-        efficiency_threshold = current_efficiency_threshold(step)
         for _ in range(proposal_steps):
             params, opt_state, last_loss = train_proposal_step(
                 proposal_model,
@@ -377,15 +384,15 @@ def run_adaptive_nir_round(
                 "resampled_batch": int(len(resampled)),
                 "ess": float(ess),
                 "efficiency": float(eff),
-                "meets_ess_threshold": bool(ess >= NIR_ESS_THRESHOLD_FRAC * vstate.n_samples),
-                "meets_efficiency_threshold": bool(eff >= efficiency_threshold),
-                "efficiency_threshold": float(efficiency_threshold),
+                "efficiency_threshold": float(eff_threshold),
                 "proposal_steps": int(proposal_steps),
+                "meets_ess_threshold": bool(ess >= NIR_ESS_THRESHOLD_FRAC * vstate.n_samples),
+                "meets_efficiency_threshold": bool(eff >= eff_threshold),
                 "forward_kl_loss_after_steps": None if last_loss is None else float(last_loss),
             }
         )
 
-        if eff >= efficiency_threshold:
+        if eff >= eff_threshold:
             break
 
     return {
@@ -394,7 +401,7 @@ def run_adaptive_nir_round(
     }, params, opt_state, final_resampled, rng
 
 
-def run_nir_stage(
+def run_nir_adam_stage(
     *,
     out_prefix,
     vstate,
@@ -408,21 +415,34 @@ def run_nir_stage(
 ):
     params = vstate.parameters
     opt_state = optimizer.init(params)
-    target_update_state = build_target_update_state()
     rng = fresh_key()
     history = []
     best_energy = None
     best_energy_distance = None
     best_iteration = None
     best_params_file = f"{out_prefix}_best.mpack"
+    best_proposal_state_file = f"{out_prefix}_proposal_best.mpack"
     logger = nk.logging.JsonLog(
         out_prefix,
         write_every=WRITE_EVERY,
         save_params_every=SAVE_PARAMS_EVERY,
         save_params=True,
     )
+    current_phase = current_learn_phase(0)
+    current_sample_count = current_num_samples(0)
+    if vstate.n_samples != current_sample_count:
+        vstate = rebuild_vstate_for_stage(vstate, current_phase, current_sample_count)
+        params = vstate.parameters
 
     for it in range(n_iter):
+        learn_phase = current_learn_phase(it)
+        n_samples = current_num_samples(it)
+        if learn_phase != current_phase or n_samples != current_sample_count:
+            vstate = rebuild_vstate_for_stage(vstate, learn_phase, n_samples)
+            params = vstate.parameters
+            current_phase = learn_phase
+            current_sample_count = n_samples
+
         nir_summary, proposal_params, proposal_opt_state, resampled, rng = run_adaptive_nir_round(
             vstate,
             proposal_model,
@@ -435,14 +455,13 @@ def run_nir_stage(
         last_round = nir_summary["rounds"][-1]
         target_update_applied = bool(last_round["meets_efficiency_threshold"])
         inject_external_samples(vstate, resampled)
+
         if target_update_applied:
-            stats, dp, target_update_state = compute_target_direction(
-                vstate, hamiltonian, target_update_state, it
+            stats, grad = compute_target_grad(vstate, hamiltonian)
+            grad = jax.tree.map(
+                lambda update, param: jnp.asarray(update, dtype=param.dtype), grad, params
             )
-            dp = jax.tree.map(
-                lambda update, param: jnp.asarray(update, dtype=param.dtype), dp, params
-            )
-            updates, opt_state = optimizer.update(dp, opt_state, params)
+            updates, opt_state = optimizer.update(grad, opt_state, params)
             params = optax.apply_updates(params, updates)
             vstate.parameters = params
         else:
@@ -457,16 +476,20 @@ def run_nir_stage(
                 "iteration": it + 1,
                 "energy": energy,
                 "energy_distance_to_exact": energy_distance,
+                "learn_phase": bool(current_phase),
                 "target_update_applied": target_update_applied,
                 "nir": nir_summary,
             }
         )
+
         if best_energy_distance is None or energy_distance < best_energy_distance:
             best_energy = energy
             best_energy_distance = energy_distance
             best_iteration = it + 1
             with open(best_params_file, "wb") as f:
                 f.write(serialization.to_bytes(vstate.variables))
+            save_proposal_state(best_proposal_state_file, proposal_params, proposal_opt_state)
+
         logger(
             it,
             {
@@ -476,16 +499,26 @@ def run_nir_stage(
                     "Efficiency": float(last_round["efficiency"]),
                     "ProposalPool": int(last_round["proposal_pool"]),
                     "TargetUpdateApplied": int(target_update_applied),
+                    "LearnPhase": int(current_phase),
+                    "TargetSamples": int(vstate.n_samples),
+                },
+                "Adam": {
+                    "TargetUpdateApplied": int(target_update_applied),
+                    "LearnPhase": int(current_phase),
+                    "TargetSamples": int(vstate.n_samples),
                 },
             },
             variational_state=vstate,
         )
+
         if (it + 1) % max(1, LOG_STEP_SIZE) == 0:
             print(
                 f"it={it + 1:5d} "
                 f"Energy={energy:.8f} "
                 f"ESS={last_round['ess']:.2f} "
                 f"Eff={last_round['efficiency']:.4f} "
+                f"Samples={vstate.n_samples:d} "
+                f"LearnPhase={'yes' if current_phase else 'no'} "
                 f"Update={'yes' if target_update_applied else 'no'}"
             )
 
@@ -497,28 +530,24 @@ def run_nir_stage(
         "best_energy_distance_to_exact": best_energy_distance,
         "best_iteration": best_iteration,
         "best_params_file": best_params_file,
+        "best_proposal_state_file": best_proposal_state_file,
         "proposal_params": proposal_params,
         "proposal_opt_state": proposal_opt_state,
         "log_file": out_prefix + ".log",
     }
 
 
-print(
-    "\n=== NIR continuation: "
-    f"{CONTINUE_ITERS} iterations at fixed refinement lr={CONTINUE_LR} "
-    f"with {CONTINUE_PROPOSAL_WARMUP_ITERS} proposal-warmup iterations ===\n"
-)
+print(f"\n=== NIR + Adam training: {NUM_ITERS_TOTAL} iterations ===\n")
 
 model = build_model()
-sampler = make_metropolis_local(hi, NUM_SAMPLES)
+sampler = make_metropolis_local(hi, NUM_SAMPLES_STAGE_1)
 
 vstate = nk.vqs.MCState(
     sampler=sampler,
     model=model,
-    n_samples=NUM_SAMPLES,
+    n_samples=NUM_SAMPLES_STAGE_1,
     chunk_size=CHUNK_SIZE,
 )
-vstate.variables = nk.experimental.vqs.variables_from_file(str(checkpoint_path), vstate.variables)
 
 proposal_model = AutoregressiveProposalNet(
     n_sites=NUM_SITES,
@@ -531,161 +560,140 @@ init_sigma = jnp.ones((4, NUM_SITES), dtype=jnp.float64)
 proposal_params = proposal_model.init(fresh_key(), init_sigma)["params"]
 proposal_optimizer = optax.adam(PROPOSAL_LR_SCHEDULE)
 proposal_opt_state = proposal_optimizer.init(proposal_params)
-if proposal_state_path is not None and proposal_state_path.exists():
-    with open(proposal_state_path, "rb") as f:
-        proposal_bytes = f.read()
-    proposal_template = {
-        "params": proposal_params,
-        "opt_state": proposal_opt_state,
-    }
-    try:
-        proposal_state = serialization.from_bytes(proposal_template, proposal_bytes)
-        proposal_params = proposal_state["params"]
-        proposal_opt_state = proposal_state["opt_state"]
-        print("Loaded proposal params and optimizer state from source run.")
-    except ValueError as err:
-        print(
-            "Proposal optimizer-state restore was incompatible with the continuation "
-            f"optimizer shape ({err}). Loading proposal params only and reinitializing "
-            "the proposal optimizer state."
-        )
-        raw_state = serialization.msgpack_restore(proposal_bytes)
-        proposal_params = serialization.from_state_dict(proposal_params, raw_state["params"])
-        proposal_opt_state = proposal_optimizer.init(proposal_params)
-else:
-    print("Proposal state file not found; using fresh proposal initialization.")
+target_optimizer = optax.chain(
+    optax.clip_by_global_norm(ADAM_CLIP_NORM),
+    optax.adam(learning_rate=TRAIN_LR_SCHEDULE),
+)
 
 print("Parameters:", vstate.n_parameters)
-print("n_chains:", vstate.sampler.n_chains)
-print("chain_length:", vstate.chain_length)
 
-out_prefix = str(continue_dir / f"out_{source_run_dir.name}_{CONTINUE_TAG}")
-result = run_nir_stage(
+out_prefix = run_path(f"out_{JOB_BASE}")
+result = run_nir_adam_stage(
     out_prefix=out_prefix,
     vstate=vstate,
     hamiltonian=ha,
-    n_iter=CONTINUE_ITERS,
-    optimizer=optax.sgd(learning_rate=CONTINUE_LR),
+    n_iter=NUM_ITERS_TOTAL,
+    optimizer=target_optimizer,
     proposal_model=proposal_model,
     proposal_params=proposal_params,
     proposal_opt_state=proposal_opt_state,
     proposal_optimizer=proposal_optimizer,
 )
 
+proposal_state_file = Path(f"{out_prefix}_proposal_state.mpack")
+save_proposal_state(proposal_state_file, result["proposal_params"], result["proposal_opt_state"])
+
 history_file = Path(f"{out_prefix}.json")
 with open(history_file, "w") as f:
     json.dump(result["history"], f, indent=2)
 
-previous_energy = collect_previous_energy(source_summary, summary_path=source_summary_path)
-new_energy = [row["energy"] for row in result["history"]]
-combined_energy = previous_energy + new_energy
-tail_energy_window = min(100, len(new_energy))
+final_energy = float(result["final_energy"])
+print("Final NIR+Adam energy:", final_energy)
+print("Final NIR+Adam gap to exact:", final_energy - EXACT_GROUND_STATE_ENERGY)
+print("Best NIR+Adam energy:", float(result["best_energy"]))
+print("Best NIR+Adam abs distance to exact:", float(result["best_energy_distance_to_exact"]))
+print("Best NIR+Adam iteration:", int(result["best_iteration"]))
+print("Best params file:", result["best_params_file"])
+print("Proposal state file:", proposal_state_file)
+print("Best proposal state file:", result["best_proposal_state_file"])
+print()
+
+energy = [row["energy"] for row in result["history"]]
+tail_energy_window = min(100, len(energy))
 tail_energy_mean = None
 tail_energy_std = None
 tail_energy_stderr = None
 if tail_energy_window:
-    tail_energy = np.asarray(new_energy[-tail_energy_window:], dtype=float)
+    tail_energy = np.asarray(energy[-tail_energy_window:], dtype=float)
     tail_energy_mean = float(np.mean(tail_energy))
     tail_energy_std = float(np.std(tail_energy, ddof=1)) if tail_energy_window > 1 else 0.0
     tail_energy_stderr = float(tail_energy_std / np.sqrt(tail_energy_window))
+    print(
+        f"Last {tail_energy_window} mean energy: "
+        f"{tail_energy_mean:.12f} ± {tail_energy_stderr:.12f} "
+        f"(std={tail_energy_std:.12f})"
+    )
+    print()
 
-mean_energy_file = continue_dir / f"mean_energy_continue_{source_run_dir.name}.txt"
+mean_energy_file = RUN_DIR / f"mean_energy_run_{JOB_BASE}.txt"
 with open(mean_energy_file, "w") as f:
-    for e in combined_energy:
+    for e in energy:
         f.write(f"{e}\n")
 
 plt.figure(figsize=(10, 6))
-if combined_energy:
-    plt.plot(combined_energy)
+if energy:
+    plt.plot(energy)
 plt.xscale("log")
 plt.xlabel("Iteration")
 plt.ylabel("Energy")
-plt.title(f"{NUM_SITES}-site Gamma (NIR continuation, input-projected)")
+plt.title(f"{NUM_SITES}-site Gamma (NIR training, input-projected, Adam)")
 plt.tight_layout()
-plot_file = continue_dir / f"gamma_vit_continue_{source_run_dir.name}.png"
+plot_file = RUN_DIR / f"gamma_vit_{JOB_BASE}.png"
 plt.savefig(plot_file)
 if SHOW_PLOTS:
     plt.show()
 else:
     plt.close()
 
-final_energy = float(result["final_energy"])
-print("Final continuation energy:", final_energy)
-print("Final continuation gap to exact:", final_energy - EXACT_GROUND_STATE_ENERGY)
-print("Best continuation energy:", float(result["best_energy"]))
-print(
-    "Best continuation abs distance to exact:",
-    float(result["best_energy_distance_to_exact"]),
-)
-print("Best continuation iteration:", int(result["best_iteration"]))
-print("Best continuation params:", result["best_params_file"])
-if tail_energy_window:
-    print(
-        f"Last {tail_energy_window} continuation mean energy: "
-        f"{tail_energy_mean:.12f} ± {tail_energy_stderr:.12f} "
-        f"(std={tail_energy_std:.12f})"
-    )
-
 summary = {
-    "source_summary_file": str(source_summary_path),
-    "source_run_dir": str(source_run_dir),
-    "checkpoint_file": str(checkpoint_path),
-    "proposal_state_file": None if proposal_state_path is None else str(proposal_state_path),
-    "continuation_run_dir": str(continue_dir),
-    "continue_iters": CONTINUE_ITERS,
-    "continue_lr": CONTINUE_LR,
-    "proposal_warmup_iters": CONTINUE_PROPOSAL_WARMUP_ITERS,
-    "target_preconditioner": TARGET_PRECONDITIONER,
-    "target_sr_diag_shift": TARGET_SR_DIAG_SHIFT,
-    "target_sr_proj_reg": TARGET_SR_PROJ_REG,
-    "target_sr_momentum": TARGET_SR_MOMENTUM,
-    "target_efficiency_gate_warmup": NIR_EFFICIENCY_THRESHOLD_WARMUP,
-    "target_efficiency_gate_refinement": NIR_EFFICIENCY_THRESHOLD_REFINEMENT,
-    "use_best_checkpoint": USE_BEST_CHECKPOINT,
+    "job_base": JOB_BASE,
+    "run_dir": str(RUN_DIR),
     "num_sites": NUM_SITES,
-    "num_samples": NUM_SAMPLES,
-    "source_num_samples": int(base_summary["num_samples"]),
-    "continue_num_samples": NUM_SAMPLES,
+    "learn_phase_stage_1": LEARN_PHASE_STAGE_1,
+    "learn_phase_stage_2": LEARN_PHASE_STAGE_2,
+    "learn_phase_stage_3": LEARN_PHASE_STAGE_3,
+    "num_samples_stage_1": NUM_SAMPLES_STAGE_1,
+    "num_samples_stage_2": NUM_SAMPLES_STAGE_2,
+    "num_samples_stage_3": NUM_SAMPLES_STAGE_3,
+    "num_iters_total": NUM_ITERS_TOTAL,
+    "optimizer": "adam",
+    "train_lr_stage_1": TRAIN_LR_STAGE_1,
+    "train_lr_stage_2": TRAIN_LR_STAGE_2,
+    "train_lr_stage_3": TRAIN_LR_STAGE_3,
+    "train_lr_stage_1_iters": TRAIN_LR_STAGE_1_ITERS,
+    "train_lr_stage_2_iters": TRAIN_LR_STAGE_2_ITERS,
+    "adam_clip_norm": ADAM_CLIP_NORM,
+    "proposal_lr_stage_1": NIR_PROPOSAL_LR_STAGE_1,
+    "proposal_lr_stage_2": NIR_PROPOSAL_LR_STAGE_2,
+    "proposal_lr_stage_3": NIR_PROPOSAL_LR_STAGE_3,
+    "proposal_steps_stage_1": NIR_PROPOSAL_STEPS_STAGE_1,
+    "proposal_steps_stage_2": NIR_PROPOSAL_STEPS_STAGE_2,
+    "proposal_steps_stage_3": NIR_PROPOSAL_STEPS_STAGE_3,
+    "target_efficiency_gate_stage_1": NIR_EFFICIENCY_THRESHOLD_STAGE_1,
+    "target_efficiency_gate_stage_2": NIR_EFFICIENCY_THRESHOLD_STAGE_2,
+    "target_efficiency_gate_stage_3": NIR_EFFICIENCY_THRESHOLD_STAGE_3,
     "embed_dim": EMBED_DIM,
     "num_heads": NUM_HEADS,
     "num_layers": NUM_LAYERS,
+    "mlp_hidden_dim": MLP_HIDDEN_DIM,
     "patch_size": PATCH_SIZE,
-    "proposal_batch": NIR_PROPOSAL_BATCH,
-    "proposal_lr_warmup": NIR_PROPOSAL_LR_WARMUP,
-    "proposal_lr_refinement": NIR_PROPOSAL_LR_REFINEMENT,
-    "proposal_steps_warmup": NIR_PROPOSAL_STEPS_WARMUP,
-    "proposal_steps_refinement": NIR_PROPOSAL_STEPS_REFINEMENT,
+    "permutation": list(range(graph.n_nodes)),
     "outputs": [str(result["log_file"])],
     "history_file": str(history_file),
     "mean_energy_file": str(mean_energy_file),
     "plot_file": str(plot_file),
     "best_params_file": str(result["best_params_file"]),
+    "proposal_state_file": str(proposal_state_file),
+    "best_proposal_state_file": str(result["best_proposal_state_file"]),
     "exact_ground_state_energy": EXACT_GROUND_STATE_ENERGY,
 }
-if combined_energy:
-    summary["final_energy"] = float(combined_energy[-1])
-    combined = np.asarray(combined_energy, dtype=float)
-    closest_idx = int(np.argmin(np.abs(combined - EXACT_GROUND_STATE_ENERGY)))
-    summary["best_energy_seen"] = float(combined[closest_idx])
-    summary["best_energy_distance_to_exact"] = float(
-        abs(combined[closest_idx] - EXACT_GROUND_STATE_ENERGY)
-    )
-    summary["best_energy_iteration"] = int(closest_idx + 1)
-if new_energy:
-    summary["continuation_tail_energy_window"] = int(tail_energy_window)
-    summary["continuation_tail_energy_mean"] = float(tail_energy_mean)
-    summary["continuation_tail_energy_std"] = float(tail_energy_std)
-    summary["continuation_tail_energy_stderr"] = float(tail_energy_stderr)
-summary["target_updates_applied"] = int(
-    sum(row["target_update_applied"] for row in result["history"])
-)
-summary["continuation_final_energy"] = float(result["final_energy"])
-summary["continuation_best_energy"] = float(result["best_energy"])
-summary["continuation_best_energy_distance_to_exact"] = float(
-    result["best_energy_distance_to_exact"]
-)
-summary["continuation_best_iteration"] = int(result["best_iteration"])
 
-summary_file = continue_dir / f"summary_continue_{source_run_dir.name}.json"
+if energy:
+    summary["final_energy"] = float(energy[-1])
+    summary["best_energy_seen"] = float(result["best_energy"])
+    summary["best_energy_distance_to_exact"] = float(result["best_energy_distance_to_exact"])
+    summary["best_energy_iteration"] = int(result["best_iteration"])
+    summary["tail_energy_window"] = int(tail_energy_window)
+    summary["tail_energy_mean"] = float(tail_energy_mean)
+    summary["tail_energy_std"] = float(tail_energy_std)
+    summary["tail_energy_stderr"] = float(tail_energy_stderr)
+    summary["target_updates_applied"] = int(
+        sum(row["target_update_applied"] for row in result["history"])
+    )
+
+summary_file = RUN_DIR / f"summary_{JOB_BASE}.json"
 with open(summary_file, "w") as f:
     json.dump(summary, f, indent=2)
+
+if energy:
+    print("Best NIR+Adam gap to exact:", float(result["best_energy"]) - EXACT_GROUND_STATE_ENERGY)
