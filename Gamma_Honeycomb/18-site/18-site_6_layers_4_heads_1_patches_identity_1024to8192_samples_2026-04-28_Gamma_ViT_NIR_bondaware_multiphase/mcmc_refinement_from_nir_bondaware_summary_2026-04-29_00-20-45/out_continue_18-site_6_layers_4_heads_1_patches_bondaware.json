@@ -1,0 +1,9 @@
+[
+  {
+    "iteration": 5735,
+    "sampling_mode": "pt_local",
+    "energy": -25.608535046721897,
+    "energy_distance_to_exact": 0.024172722922386924,
+    "target_update_applied": true
+  }
+]

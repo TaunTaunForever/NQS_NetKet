@@ -65,6 +65,10 @@ def resolve_source_run_dir(summary: dict, summary_path: Path) -> Path:
         ).expanduser().resolve()
     else:
         run_dir = Path(summary.get("run_dir", summary_path.parent)).expanduser().resolve()
+        if not run_dir.is_dir():
+            fallback_dir = summary_path.parent.expanduser().resolve()
+            if fallback_dir.is_dir():
+                run_dir = fallback_dir
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
     return run_dir
@@ -80,19 +84,31 @@ def find_latest_checkpoint(
             candidate = Path(run_summary["output"]).with_suffix(".mpack")
             if candidate.is_file():
                 return candidate.resolve()
+            local_candidate = (run_dir / candidate.name).resolve()
+            if local_candidate.is_file():
+                return local_candidate
         if "checkpoint_file" in run_summary:
             candidate = Path(run_summary["checkpoint_file"])
             if candidate.is_file():
                 return candidate.resolve()
+            local_candidate = (run_dir / candidate.name).resolve()
+            if local_candidate.is_file():
+                return local_candidate
         if "checkpoint_file" in summary:
             candidate = Path(summary["checkpoint_file"])
             if candidate.is_file():
                 return candidate.resolve()
+            local_candidate = (run_dir / candidate.name).resolve()
+            if local_candidate.is_file():
+                return local_candidate
 
     for out in reversed(summary.get("outputs", [])):
         candidate = Path(out).with_suffix(".mpack")
         if candidate.is_file():
             return candidate.resolve()
+        local_candidate = (run_dir / candidate.name).resolve()
+        if local_candidate.is_file():
+            return local_candidate
 
     candidates = sorted(run_dir.glob("*.mpack"), key=lambda p: p.stat().st_mtime)
     if candidates:
@@ -104,13 +120,19 @@ def find_latest_checkpoint(
     )
 
 
-def _first_existing_path(candidates: list[str | Path | None]) -> Path | None:
+def _first_existing_path(
+    candidates: list[str | Path | None], run_dir: Path | None = None
+) -> Path | None:
     for candidate in candidates:
         if not candidate:
             continue
         path = Path(candidate).expanduser().resolve()
         if path.is_file():
             return path
+        if run_dir is not None:
+            local_candidate = (run_dir / path.name).resolve()
+            if local_candidate.is_file():
+                return local_candidate
     return None
 
 
@@ -126,7 +148,8 @@ def find_latest_training_state(
                 run_summary.get("latest_training_state_file"),
                 summary.get("training_state_file"),
                 summary.get("latest_training_state_file"),
-            ]
+            ],
+            run_dir=run_dir,
         )
         if path is not None:
             return path
@@ -135,7 +158,8 @@ def find_latest_training_state(
             [
                 summary.get("training_state_file"),
                 summary.get("latest_training_state_file"),
-            ]
+            ],
+            run_dir=run_dir,
         )
         if path is not None:
             return path
@@ -156,12 +180,15 @@ def find_best_training_state(
             [
                 run_summary.get("best_training_state_file"),
                 summary.get("best_training_state_file"),
-            ]
+            ],
+            run_dir=run_dir,
         )
         if path is not None:
             return path
     else:
-        path = _first_existing_path([summary.get("best_training_state_file")])
+        path = _first_existing_path(
+            [summary.get("best_training_state_file")], run_dir=run_dir
+        )
         if path is not None:
             return path
 

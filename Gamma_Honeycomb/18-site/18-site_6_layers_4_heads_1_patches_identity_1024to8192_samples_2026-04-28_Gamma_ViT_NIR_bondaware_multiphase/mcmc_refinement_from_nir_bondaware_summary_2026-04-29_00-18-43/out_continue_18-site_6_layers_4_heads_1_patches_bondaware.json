@@ -1,0 +1,9 @@
+[
+  {
+    "iteration": 5735,
+    "sampling_mode": "mcmc",
+    "energy": -25.607122730125578,
+    "energy_distance_to_exact": 0.02558503951864921,
+    "target_update_applied": true
+  }
+]
