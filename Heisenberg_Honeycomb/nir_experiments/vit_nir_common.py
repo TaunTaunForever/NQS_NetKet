@@ -37,7 +37,13 @@ from proposal_network import (
     sample_from_proposal,
     train_proposal_step,
 )
-from vit_model import PatchViT
+from vit_site_type_relation_model import (
+    HoneycombSiteTypeRelationViT,
+    build_bipartite_site_type_ids,
+    build_honeycomb_relation_matrix,
+    site_relation_to_patch_relation_expanded,
+    site_type_ids_to_patch_type_ids,
+)
 
 
 jax.config.update("jax_enable_x64", True)
@@ -112,12 +118,27 @@ def run_nir_experiment(
     job_base = (
         f"Heisenberg_{num_sites}-site_"
         f"{num_layers}L_{num_heads}H_{patch_size}p_"
-        f"{num_samples_stage_1}to{num_samples_stage_3}_samples_{today}_Honeycomb_ViT_NIR"
+        f"{num_samples_stage_1}to{num_samples_stage_3}_samples_{today}_Honeycomb_ViT_NIR_site_type_relation"
     )
     run_dir = Path("runs") / today / job_base
     run_dir.mkdir(parents=True, exist_ok=True)
 
     graph, extent, hi, ha = make_heisenberg_hamiltonian(num_sites)
+    perm = tuple(range(graph.n_nodes))
+    site_type_ids = build_bipartite_site_type_ids(graph, permutation=perm)
+    token_site_type_ids = (
+        site_type_ids
+        if patch_size == 1
+        else site_type_ids_to_patch_type_ids(site_type_ids, patch_size)
+    )
+    site_relation_matrix = build_honeycomb_relation_matrix(graph, permutation=perm)
+    relation_matrix = (
+        site_relation_matrix
+        if patch_size == 1
+        else site_relation_to_patch_relation_expanded(site_relation_matrix, patch_size)
+    )
+    num_relation_types = max(max(row) for row in relation_matrix) + 1
+    num_site_types = max(token_site_type_ids) + 1
     exact_gs = None
     if num_sites <= 24:
         sp_h = ha.to_sparse()
@@ -126,6 +147,10 @@ def run_nir_experiment(
         print("Exact ground-state energy:", exact_gs)
 
     print("Run directory:", run_dir)
+    print("Site type ids:", token_site_type_ids)
+    print("Number of site types:", num_site_types)
+    print("Relation matrix shape:", (len(relation_matrix), len(relation_matrix[0])))
+    print("Number of relation types:", num_relation_types)
 
     def fresh_key():
         seed = int(np.random.SeedSequence().generate_state(1, dtype=np.uint32)[0])
@@ -160,13 +185,16 @@ def run_nir_experiment(
         return nir_proposal_steps_stage_3
 
     def build_model(learn_phase):
-        return PatchViT(
+        return HoneycombSiteTypeRelationViT(
             embed_dim=embed_dim,
             num_heads=num_heads,
             num_layers=num_layers,
-            mlp_hidden=mlp_hidden,
+            mlp_hidden_dim=mlp_hidden,
             patch_size=patch_size,
             learn_phase=learn_phase,
+            relation_matrix=relation_matrix,
+            site_type_ids=token_site_type_ids,
+            permutation=perm,
         )
 
     def make_sampler(n_samples):
@@ -407,6 +435,12 @@ def run_nir_experiment(
         "num_samples_stage_3": num_samples_stage_3,
         "num_iters_total": num_iters_total,
         "patch_size": patch_size,
+        "permutation": list(perm),
+        "site_type_ids": list(token_site_type_ids),
+        "num_site_types": num_site_types,
+        "relation_matrix": [list(row) for row in relation_matrix],
+        "num_relation_types": num_relation_types,
+        "site_type_relation_model": True,
         "embed_dim": embed_dim,
         "num_heads": num_heads,
         "num_layers": num_layers,

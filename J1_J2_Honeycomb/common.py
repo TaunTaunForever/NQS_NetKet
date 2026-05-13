@@ -34,5 +34,6 @@ def build_honeycomb_graph(num_sites: int, *, max_neighbor_order: int = 2):
 def make_heisenberg_hamiltonian(num_sites: int, *, j1: float, j2: float):
     graph, extent = build_honeycomb_graph(num_sites, max_neighbor_order=2)
     hi = nk.hilbert.Spin(s=1 / 2, N=graph.n_nodes, total_sz=0)
-    ha = nk.operator.Heisenberg(hilbert=hi, graph=graph, J=[j1, j2])
+    sign_rule = [True, False] if abs(j2) < 1e-12 else [False, False]
+    ha = nk.operator.Heisenberg(hilbert=hi, graph=graph, J=[j1, j2], sign_rule=sign_rule)
     return graph, extent, hi, ha

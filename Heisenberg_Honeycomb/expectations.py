@@ -1,17 +1,7 @@
-import sys
-import json
 import os
 os.environ["JAX_PLATFORM_NAME"] = "gpu"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
-from datetime import date    
 import netket as nk
-import numpy as np
-import matplotlib.pyplot as plt
-from netket.operator.spin import sigmax,sigmaz, sigmay
-from scipy.sparse.linalg import eigsh
-import tracemalloc
-import netket.experimental as nkx
-import flax
 
 def define_observables(num_sites, hi):
     obs = {}
@@ -65,14 +55,14 @@ def define_observables(num_sites, hi):
 
 
 
-def calculate_expectations(driver, obs, iters=100):
-    driver.run(iters, out='out_{}'.format("Expectations"), obs=obs)
-    data = json.load(open('out_{}.log'.format("Expectations")))
-    obs_keys = obs.keys()
+def calculate_expectations(vstate, hamiltonian, obs):
+    energy_stats = vstate.expect(hamiltonian)
+    print(f"Energy mean value = {energy_stats.mean}")
 
-    mean = np.mean(data["Energy"]["Mean"]["real"][:])
-    print(f"Energy mean value = {mean}")
+    expectation_values = {"Energy": energy_stats.mean}
+    for key, operator in obs.items():
+        stats = vstate.expect(operator)
+        expectation_values[key] = stats.mean
+        print(f"{key} mean value = {stats.mean}")
 
-    for key in obs_keys:
-        mean = np.mean(data[key]["Mean"]["real"][:])
-        print(f"{key} mean value = {mean}")
+    return expectation_values

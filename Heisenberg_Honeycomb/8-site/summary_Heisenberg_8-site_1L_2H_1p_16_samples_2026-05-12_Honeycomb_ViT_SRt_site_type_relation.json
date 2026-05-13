@@ -1,0 +1,130 @@
+{
+  "job_name": "Heisenberg_8-site_1L_2H_1p_16_samples_2026-05-12_Honeycomb_ViT_SRt_site_type_relation",
+  "num_sites": 8,
+  "extent": [
+    2,
+    2
+  ],
+  "num_samples": 16,
+  "num_iters_warm": 1,
+  "num_iters": 1,
+  "chunk_size": 16,
+  "patch_size": 1,
+  "permutation": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "site_type_ids": [
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1
+  ],
+  "num_site_types": 2,
+  "relation_matrix": [
+    [
+      0,
+      1,
+      4,
+      1,
+      4,
+      1,
+      4,
+      3
+    ],
+    [
+      1,
+      0,
+      1,
+      4,
+      1,
+      4,
+      3,
+      4
+    ],
+    [
+      4,
+      1,
+      0,
+      1,
+      4,
+      3,
+      4,
+      1
+    ],
+    [
+      1,
+      4,
+      1,
+      0,
+      3,
+      4,
+      1,
+      4
+    ],
+    [
+      4,
+      1,
+      4,
+      3,
+      0,
+      1,
+      4,
+      1
+    ],
+    [
+      1,
+      4,
+      3,
+      4,
+      1,
+      0,
+      1,
+      4
+    ],
+    [
+      4,
+      3,
+      4,
+      1,
+      4,
+      1,
+      0,
+      1
+    ],
+    [
+      3,
+      4,
+      1,
+      4,
+      1,
+      4,
+      1,
+      0
+    ]
+  ],
+  "num_relation_types": 5,
+  "site_type_relation_model": true,
+  "embed_dim": 8,
+  "num_heads": 2,
+  "num_layers": 1,
+  "mlp_hidden": 16,
+  "final_energy": -9.162285603197356,
+  "best_energy_seen": -9.162285603197356,
+  "exact_ground_state_energy": -19.28035749749916,
+  "mean_energy_file": "mean_energy_run_Heisenberg_8-site_1L_2H_1p_16_samples_2026-05-12_Honeycomb_ViT_SRt_site_type_relation.txt",
+  "log_file": "out_Heisenberg_8-site_1L_2H_1p_16_samples_2026-05-12_Honeycomb_ViT_SRt_site_type_relation.log",
+  "warm_log_file": "out_warm_Heisenberg_8-site_1L_2H_1p_16_samples_2026-05-12_Honeycomb_ViT_SRt_site_type_relation.log",
+  "plot_file": "energy_Heisenberg_8-site_1L_2H_1p_16_samples_2026-05-12_Honeycomb_ViT_SRt_site_type_relation.png",
+  "plot_log_file": "energy_log_Heisenberg_8-site_1L_2H_1p_16_samples_2026-05-12_Honeycomb_ViT_SRt_site_type_relation.png"
+}

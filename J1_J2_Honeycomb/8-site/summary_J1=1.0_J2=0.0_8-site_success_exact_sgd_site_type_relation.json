@@ -1,0 +1,142 @@
+{
+  "job_name": "J1=1.0_J2=0.0_8-site_2L_2H_1p_512_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt_site_type_relation",
+  "num_sites": 8,
+  "extent": [
+    2,
+    2
+  ],
+  "num_samples": 512,
+  "num_iters_warm": 0,
+  "num_iters": 180,
+  "chunk_size": 256,
+  "j1": 1.0,
+  "j2": 0.0,
+  "patch_size": 1,
+  "permutation": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "site_type_ids": [
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1
+  ],
+  "num_site_types": 2,
+  "relation_matrix": [
+    [
+      0,
+      1,
+      2,
+      1,
+      2,
+      1,
+      2,
+      3
+    ],
+    [
+      1,
+      0,
+      1,
+      2,
+      1,
+      2,
+      3,
+      2
+    ],
+    [
+      2,
+      1,
+      0,
+      1,
+      2,
+      3,
+      2,
+      1
+    ],
+    [
+      1,
+      2,
+      1,
+      0,
+      3,
+      2,
+      1,
+      2
+    ],
+    [
+      2,
+      1,
+      2,
+      3,
+      0,
+      1,
+      2,
+      1
+    ],
+    [
+      1,
+      2,
+      3,
+      2,
+      1,
+      0,
+      1,
+      2
+    ],
+    [
+      2,
+      3,
+      2,
+      1,
+      2,
+      1,
+      0,
+      1
+    ],
+    [
+      3,
+      2,
+      1,
+      2,
+      1,
+      2,
+      1,
+      0
+    ]
+  ],
+  "num_relation_types": 4,
+  "site_type_relation_model": true,
+  "embed_dim": 16,
+  "num_heads": 2,
+  "num_layers": 2,
+  "mlp_hidden": 32,
+  "learning_rate": 0.01,
+  "learning_rate_warm": 0.01,
+  "learning_rate_main": 0.01,
+  "momentum": 0.0,
+  "learn_phase_main": false,
+  "diag_shift_warm": 0.0001,
+  "diag_shift_main": 0.01,
+  "sampler_name": "exact",
+  "d_max": 2,
+  "optimizer_name": "sgd",
+  "final_energy": -19.280381938245146,
+  "best_energy_seen": -19.297186824191773,
+  "exact_ground_state_energy": -19.28035749749916,
+  "mean_energy_file": "mean_energy_run_J1=1.0_J2=0.0_8-site_2L_2H_1p_512_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt_site_type_relation.txt",
+  "log_file": "out_J1=1.0_J2=0.0_8-site_2L_2H_1p_512_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt_site_type_relation.log",
+  "warm_log_file": null,
+  "plot_file": "energy_J1=1.0_J2=0.0_8-site_2L_2H_1p_512_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt_site_type_relation.png",
+  "plot_log_file": "energy_log_J1=1.0_J2=0.0_8-site_2L_2H_1p_512_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt_site_type_relation.png"
+}

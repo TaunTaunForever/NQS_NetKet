@@ -145,8 +145,13 @@ driver_2.run(
     save_params_every=10,
 )
 
-data = json.load(open(f"out_{JOB_NAME}.log"))
-energy = data["Energy"]["Mean"]["real"]
+with open(f"out_{JOB_NAME}.log") as f:
+    data = json.load(f)
+energy_mean = data["Energy"]["Mean"]
+if isinstance(energy_mean, dict):
+    energy = energy_mean["real"]
+else:
+    energy = energy_mean
 
 with open(f"mean_energy_run_{JOB_NAME}.txt", "w") as f:
     for item in energy:
@@ -170,7 +175,7 @@ plt.tight_layout()
 plt.savefig(f"energy_log_{JOB_NAME}.png")
 
 observables = expectations.define_observables(NUM_SITES, hi)
-expectations.calculate_expectations(driver_2, observables)
+expectations.calculate_expectations(vstate_2, ha, observables)
 
 summary = {
     "job_name": JOB_NAME,

@@ -17,10 +17,26 @@ from scipy.sparse.linalg import eigsh
 
 import expectations
 from common import make_heisenberg_hamiltonian
-from vit_model import PatchViT
+from vit_site_type_relation_model import (
+    HoneycombSiteTypeRelationViT,
+    build_bipartite_site_type_ids,
+    build_honeycomb_relation_matrix,
+    site_relation_to_patch_relation_expanded,
+    site_type_ids_to_patch_type_ids,
+)
 
 
 jax.config.update("jax_enable_x64", True)
+
+
+def _extract_real_series(log_data: dict, observable: str = "Energy") -> list[float]:
+    series = log_data[observable]["Mean"]
+    if isinstance(series, dict):
+        if "real" in series:
+            return [float(x) for x in series["real"]]
+        if "value" in series:
+            return [float(x) for x in series["value"]]
+    return [float(x) for x in series]
 
 
 def run_srt_experiment(
@@ -41,16 +57,35 @@ def run_srt_experiment(
     job_name = (
         f"Heisenberg_{num_sites}-site_"
         f"{num_layers}L_{num_heads}H_{patch_size}p_"
-        f"{num_samples}_samples_{today}_Honeycomb_ViT_SRt"
+        f"{num_samples}_samples_{today}_Honeycomb_ViT_SRt_site_type_relation"
     )
 
     graph, extent, hi, ha = make_heisenberg_hamiltonian(num_sites)
+    perm = tuple(range(graph.n_nodes))
+    site_type_ids = build_bipartite_site_type_ids(graph, permutation=perm)
+    token_site_type_ids = (
+        site_type_ids
+        if patch_size == 1
+        else site_type_ids_to_patch_type_ids(site_type_ids, patch_size)
+    )
+    site_relation_matrix = build_honeycomb_relation_matrix(graph, permutation=perm)
+    relation_matrix = (
+        site_relation_matrix
+        if patch_size == 1
+        else site_relation_to_patch_relation_expanded(site_relation_matrix, patch_size)
+    )
+    num_relation_types = max(max(row) for row in relation_matrix) + 1
+    num_site_types = max(token_site_type_ids) + 1
 
     print(f"Defining {num_sites}-site Heisenberg Honeycomb lattice")
     print("___________________________________________________")
     print(f"Honeycomb lattice extent: {extent}")
     print("Sites:", graph.n_nodes)
     print("Edges:", graph.n_edges)
+    print("Site type ids:", token_site_type_ids)
+    print("Number of site types:", num_site_types)
+    print("Relation matrix shape:", (len(relation_matrix), len(relation_matrix[0])))
+    print("Number of relation types:", num_relation_types)
     print()
 
     exact_gs = None
@@ -66,13 +101,16 @@ def run_srt_experiment(
 
     print("\n=== Stage 1: amplitude-only warm start ===\n")
 
-    model_warm = PatchViT(
+    model_warm = HoneycombSiteTypeRelationViT(
         embed_dim=embed_dim,
         num_heads=num_heads,
         num_layers=num_layers,
-        mlp_hidden=mlp_hidden,
+        mlp_hidden_dim=mlp_hidden,
         patch_size=patch_size,
         learn_phase=False,
+        relation_matrix=relation_matrix,
+        site_type_ids=token_site_type_ids,
+        permutation=perm,
     )
 
     vstate_1 = nk.vqs.MCState(
@@ -101,13 +139,16 @@ def run_srt_experiment(
 
     print("\n=== Stage 2: full complex optimization ===\n")
 
-    model_full = PatchViT(
+    model_full = HoneycombSiteTypeRelationViT(
         embed_dim=embed_dim,
         num_heads=num_heads,
         num_layers=num_layers,
-        mlp_hidden=mlp_hidden,
+        mlp_hidden_dim=mlp_hidden,
         patch_size=patch_size,
         learn_phase=True,
+        relation_matrix=relation_matrix,
+        site_type_ids=token_site_type_ids,
+        permutation=perm,
     )
 
     vstate_2 = nk.vqs.MCState(
@@ -137,8 +178,9 @@ def run_srt_experiment(
         save_params_every=10,
     )
 
-    data = json.load(open(f"out_{job_name}.log"))
-    energy = data["Energy"]["Mean"]["real"]
+    with open(f"out_{job_name}.log") as f:
+        data = json.load(f)
+    energy = _extract_real_series(data, "Energy")
 
     with open(f"mean_energy_run_{job_name}.txt", "w") as f:
         for item in energy:
@@ -164,7 +206,7 @@ def run_srt_experiment(
     plt.close()
 
     observables = expectations.define_observables(num_sites, hi)
-    expectations.calculate_expectations(driver_2, observables)
+    expectations.calculate_expectations(vstate_2, ha, observables)
 
     summary = {
         "job_name": job_name,
@@ -175,6 +217,12 @@ def run_srt_experiment(
         "num_iters": num_iters,
         "chunk_size": chunk_size,
         "patch_size": patch_size,
+        "permutation": list(perm),
+        "site_type_ids": list(token_site_type_ids),
+        "num_site_types": num_site_types,
+        "relation_matrix": [list(row) for row in relation_matrix],
+        "num_relation_types": num_relation_types,
+        "site_type_relation_model": True,
         "embed_dim": embed_dim,
         "num_heads": num_heads,
         "num_layers": num_layers,

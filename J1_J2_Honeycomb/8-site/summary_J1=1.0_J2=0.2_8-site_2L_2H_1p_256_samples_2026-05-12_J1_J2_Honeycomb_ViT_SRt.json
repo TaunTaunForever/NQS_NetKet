@@ -1,0 +1,33 @@
+{
+  "job_name": "J1=1.0_J2=0.2_8-site_2L_2H_1p_256_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt",
+  "num_sites": 8,
+  "extent": [
+    2,
+    2
+  ],
+  "num_samples": 256,
+  "num_iters_warm": 0,
+  "num_iters": 300,
+  "chunk_size": 128,
+  "j1": 1.0,
+  "j2": 0.2,
+  "patch_size": 1,
+  "embed_dim": 8,
+  "num_heads": 2,
+  "num_layers": 2,
+  "mlp_hidden": 16,
+  "learning_rate": 0.005,
+  "momentum": 0.0,
+  "diag_shift_warm": 0.0001,
+  "diag_shift_main": 0.01,
+  "sampler_name": "local",
+  "d_max": 2,
+  "final_energy": -15.347836448432687,
+  "best_energy_seen": -18.145043529225603,
+  "exact_ground_state_energy": -17.229737951558295,
+  "mean_energy_file": "mean_energy_run_J1=1.0_J2=0.2_8-site_2L_2H_1p_256_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt.txt",
+  "log_file": "out_J1=1.0_J2=0.2_8-site_2L_2H_1p_256_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt.log",
+  "warm_log_file": null,
+  "plot_file": "energy_J1=1.0_J2=0.2_8-site_2L_2H_1p_256_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt.png",
+  "plot_log_file": "energy_log_J1=1.0_J2=0.2_8-site_2L_2H_1p_256_samples_2026-05-12_J1_J2_Honeycomb_ViT_SRt.png"
+}

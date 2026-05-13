@@ -14,6 +14,5 @@ from vit_nir_common import run_nir_experiment
 run_nir_experiment(
     num_sites=8,
     j1=float(os.environ.get("J1J2_J1", "1.0")),
-    j2=float(os.environ.get("J1J2_J2", "0.2")),
+    j2=float(os.environ.get("J1J2_J2", "0.0")),
 )
-

@@ -1,11 +1,9 @@
-import json
 import os
 
 os.environ["JAX_PLATFORM_NAME"] = "gpu"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import netket as nk
-import numpy as np
 
 
 def define_observables(num_sites, hi):
@@ -33,14 +31,14 @@ def define_observables(num_sites, hi):
     return obs
 
 
-def calculate_expectations(driver, obs, iters=100):
-    driver.run(iters, out="out_Expectations", obs=obs)
-    data = json.load(open("out_Expectations.log"))
+def calculate_expectations(vstate, hamiltonian, obs):
+    energy_stats = vstate.expect(hamiltonian)
+    print(f"Energy mean value = {energy_stats.mean}")
 
-    energy_mean = np.mean(data["Energy"]["Mean"]["real"][:])
-    print(f"Energy mean value = {energy_mean}")
+    expectation_values = {"Energy": energy_stats.mean}
+    for key, operator in obs.items():
+        stats = vstate.expect(operator)
+        expectation_values[key] = stats.mean
+        print(f"{key} mean value = {stats.mean}")
 
-    for key in obs.keys():
-        mean = np.mean(data[key]["Mean"]["real"][:])
-        print(f"{key} mean value = {mean}")
-
+    return expectation_values
