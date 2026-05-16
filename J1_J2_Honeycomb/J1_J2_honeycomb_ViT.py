@@ -5,6 +5,8 @@ from datetime import date
 os.environ["JAX_PLATFORM_NAME"] = "gpu"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["NETKET_DEBUG"] = "1"
+os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import jax
 import jax.numpy as jnp
@@ -174,8 +176,25 @@ plt.title(f"J1-J2 Honeycomb {NUM_SITES}-site (ViT)")
 plt.tight_layout()
 plt.savefig(f"energy_log_{JOB_NAME}.png")
 
-observables = expectations.define_observables(NUM_SITES, hi)
-expectations.calculate_expectations(vstate_2, ha, observables)
+observables = expectations.define_observables(NUM_SITES, hi, graph)
+observable_results = expectations.calculate_expectations(vstate_2, ha, observables)
+
+
+def _json_safe(value):
+    if isinstance(value, complex):
+        return {"real": float(value.real), "imag": float(value.imag)}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return value
+
+
+observables_file = f"observables_{JOB_NAME}.json"
+with open(observables_file, "w") as f:
+    json.dump(_json_safe(observable_results), f, indent=2)
 
 summary = {
     "job_name": JOB_NAME,
@@ -200,6 +219,7 @@ summary = {
     "warm_log_file": f"out_warm_{JOB_NAME}.log",
     "plot_file": f"energy_{JOB_NAME}.png",
     "plot_log_file": f"energy_log_{JOB_NAME}.png",
+    "observables_file": observables_file,
 }
 
 with open(f"summary_{JOB_NAME}.json", "w") as f:

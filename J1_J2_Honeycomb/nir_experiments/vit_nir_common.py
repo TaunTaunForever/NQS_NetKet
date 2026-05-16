@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import netket as nk
 import numpy as np
 import optax
+from netket._src.ngd.sr_srt_common import srt as compute_minsr_direction
 from scipy.sparse.linalg import eigsh
 
 from common import make_heisenberg_hamiltonian
@@ -57,45 +58,66 @@ def run_nir_experiment(
     num_samples_stage_1: int = 3*2**8,
     num_samples_stage_2: int = 3*2**9,
     num_samples_stage_3: int = 3*2**10,
-    num_iters_total: int = 4000,
+    num_iters_total: int = 1000,
     patch_size: int = 1,
-    embed_dim: int = 32,
-    num_heads: int = 4,
+    embed_dim: int = 18,
+    num_heads: int = 2,
     num_layers: int = 4,
     mlp_hidden: int | None = None,
     chunk_size: int | None = 2**9,
+    train_lr_stage_1: float = 1e-2,
+    train_lr_stage_2: float = 1e-2,
+    train_lr_stage_3: float = 1e-3,
+    train_lr_stage_1_iters: int | None = None,
+    train_lr_stage_2_iters: int | None = None,
+    learn_phase_stage_1: bool = False,
+    learn_phase_stage_2: bool = True,
+    learn_phase_stage_3: bool = True,
+    target_sampler_name: str = "local",
+    target_optimizer_name: str = "adam",
+    target_sgd_momentum: float = 0.0,
+    target_preconditioner: str = "none",
+    target_sr_diag_shift: float = 1e-2,
+    target_sr_diag_shift_stage_1: float | None = None,
+    target_sr_diag_shift_stage_2: float | None = None,
+    target_sr_diag_shift_stage_3: float | None = None,
+    target_sr_proj_reg: float | None = None,
+    target_sr_momentum: float | None = None,
+    target_sr_mode: str = "complex",
+    nir_proposal_batch: int = 2**9,
+    nir_max_proposal_batches: int = 12,
+    nir_max_adaptive_rounds: int = 6,
+    nir_ess_threshold_frac: float = 0.4,
+    nir_efficiency_threshold_stage_1: float = 0.10,
+    nir_efficiency_threshold_stage_2: float = 0.10,
+    nir_efficiency_threshold_stage_3: float = 0.10,
+    nir_proposal_lr_stage_1: float = 1e-3,
+    nir_proposal_lr_stage_2: float = 1e-3,
+    nir_proposal_lr_stage_3: float = 1e-3,
+    nir_proposal_steps_stage_1: int = 1,
+    nir_proposal_steps_stage_2: int = 1,
+    nir_proposal_steps_stage_3: int = 1,
+    nir_proposal_embed_dim: int = 32,
+    nir_proposal_heads: int = 4,
+    nir_proposal_layers: int = 4,
+    nir_proposal_mlp: int | None = None,
+    nir_prob_floor: float = 1e-6,
+    run_tag: str | None = None,
 ):
     today = date.today().isoformat()
     mlp_hidden = 2 * embed_dim if mlp_hidden is None else mlp_hidden
-
-    train_lr_stage_1 = 1e-2
-    train_lr_stage_2 = 1e-2
-    train_lr_stage_3 = 1e-3
-    train_lr_stage_1_iters = max(1, num_iters_total // 20)
-    train_lr_stage_2_iters = max(1, num_iters_total // 2)
-
-    learn_phase_stage_1 = False
-    learn_phase_stage_2 = True
-    learn_phase_stage_3 = True
-
-    nir_proposal_batch = 2**9
-    nir_max_proposal_batches = 12
-    nir_max_adaptive_rounds = 6
-    nir_ess_threshold_frac = 0.4
-    nir_efficiency_threshold_stage_1 = 0.10
-    nir_efficiency_threshold_stage_2 = 0.10
-    nir_efficiency_threshold_stage_3 = 0.10
-    nir_proposal_lr_stage_1 = 1e-3
-    nir_proposal_lr_stage_2 = 1e-3
-    nir_proposal_lr_stage_3 = 1e-3
-    nir_proposal_steps_stage_1 = 1
-    nir_proposal_steps_stage_2 = 1
-    nir_proposal_steps_stage_3 = 1
-    nir_proposal_embed_dim = 32
-    nir_proposal_heads = 4
-    nir_proposal_layers = 4
-    nir_proposal_mlp = 2 * nir_proposal_embed_dim
-    nir_prob_floor = 1e-6
+    train_lr_stage_1_iters = max(1, num_iters_total // 20) if train_lr_stage_1_iters is None else train_lr_stage_1_iters
+    train_lr_stage_2_iters = max(1, num_iters_total // 2) if train_lr_stage_2_iters is None else train_lr_stage_2_iters
+    nir_proposal_mlp = 2 * nir_proposal_embed_dim if nir_proposal_mlp is None else nir_proposal_mlp
+    target_sr_diag_shift_stage_1 = (
+        target_sr_diag_shift if target_sr_diag_shift_stage_1 is None else target_sr_diag_shift_stage_1
+    )
+    target_sr_diag_shift_stage_2 = (
+        target_sr_diag_shift if target_sr_diag_shift_stage_2 is None else target_sr_diag_shift_stage_2
+    )
+    target_sr_diag_shift_stage_3 = (
+        target_sr_diag_shift if target_sr_diag_shift_stage_3 is None else target_sr_diag_shift_stage_3
+    )
 
     train_lr_boundary_1 = train_lr_stage_1_iters
     train_lr_boundary_2 = train_lr_stage_1_iters + train_lr_stage_2_iters
@@ -116,6 +138,14 @@ def run_nir_experiment(
         ],
         boundaries=[train_lr_boundary_1, train_lr_boundary_2],
     )
+    target_sr_diag_shift_schedule = optax.join_schedules(
+        schedules=[
+            optax.constant_schedule(target_sr_diag_shift_stage_1),
+            optax.constant_schedule(target_sr_diag_shift_stage_2),
+            optax.constant_schedule(target_sr_diag_shift_stage_3),
+        ],
+        boundaries=[train_lr_boundary_1, train_lr_boundary_2],
+    )
 
     job_base = (
         f"J1={j1}_J2={j2}_{num_sites}-site_"
@@ -123,6 +153,8 @@ def run_nir_experiment(
         f"{num_samples_stage_1}to{num_samples_stage_3}_samples_{today}_"
         f"J1_J2_Honeycomb_ViT_NIR_site_type_relation"
     )
+    if run_tag:
+        job_base = f"{job_base}_{run_tag}"
     run_dir = Path("runs") / today / job_base
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -187,6 +219,9 @@ def run_nir_experiment(
             return nir_proposal_steps_stage_2
         return nir_proposal_steps_stage_3
 
+    def current_target_sr_diag_shift(step):
+        return float(target_sr_diag_shift_schedule(step))
+
     def build_model(learn_phase):
         return HoneycombSiteTypeRelationViT(
             embed_dim=embed_dim,
@@ -201,8 +236,72 @@ def run_nir_experiment(
         )
 
     def make_sampler(n_samples):
-        n_chains = max(1, n_samples // 128)
-        return nk.sampler.MetropolisLocal(hilbert=hi, n_chains=n_chains)
+        if target_sampler_name == "exact":
+            return nk.sampler.ExactSampler(hi)
+        if target_sampler_name == "local":
+            n_chains = max(1, n_samples // 128)
+            return nk.sampler.MetropolisLocal(hilbert=hi, n_chains=n_chains)
+        raise ValueError(f"Unsupported target_sampler_name={target_sampler_name!r}")
+
+    def make_target_optimizer():
+        if target_optimizer_name == "adam":
+            return optax.adam(learning_rate=train_lr_schedule)
+        if target_optimizer_name == "sgd":
+            return optax.sgd(learning_rate=train_lr_schedule, momentum=target_sgd_momentum)
+        raise ValueError(f"Unsupported target_optimizer_name={target_optimizer_name!r}")
+
+    def make_target_preconditioner():
+        if target_preconditioner == "none":
+            return {"kind": "none", "preconditioner": None, "old_updates": None, "info": None}
+        if target_preconditioner == "sr":
+            return {
+                "kind": "sr",
+                "preconditioner": None,
+                "old_updates": None,
+                "info": None,
+            }
+        if target_preconditioner == "minsr":
+            return {"kind": "minsr", "preconditioner": None, "old_updates": None, "info": None}
+        raise ValueError(f"Unsupported target_preconditioner={target_preconditioner!r}")
+
+    def compute_target_direction(vstate, hamiltonian, target_update_state, step, learn_phase):
+        kind = target_update_state["kind"]
+        if kind == "none":
+            stats, grad = vstate.expect_and_grad(hamiltonian)
+            return stats, grad, target_update_state
+
+        if kind == "sr":
+            stats, grad = vstate.expect_and_grad(hamiltonian)
+            preconditioner = nk.optimizer.SR(diag_shift=current_target_sr_diag_shift(step))
+            dp = preconditioner(vstate, grad)
+            info = getattr(preconditioner, "info", None)
+            target_update_state["info"] = info
+            return stats, dp, target_update_state
+
+        if kind == "minsr":
+            local_energies = vstate.local_estimators(hamiltonian, chunk_size=chunk_size)
+            stats = nk.stats.statistics(local_energies)
+            samples = jax.lax.collapse(vstate.samples, 0, vstate.samples.ndim - 1)
+            effective_mode = target_sr_mode if learn_phase else "real"
+            dp, old_updates, info = compute_minsr_direction(
+                vstate._apply_fun,
+                local_energies,
+                vstate.parameters,
+                vstate.model_state,
+                samples,
+                diag_shift=current_target_sr_diag_shift(step),
+                solver_fn=nk.optimizer.solver.cholesky,
+                mode=effective_mode,
+                proj_reg=target_sr_proj_reg,
+                momentum=target_sr_momentum,
+                old_updates=target_update_state["old_updates"],
+                chunk_size=chunk_size,
+            )
+            target_update_state["old_updates"] = old_updates
+            target_update_state["info"] = info
+            return stats, dp, target_update_state
+
+        raise ValueError(f"Unsupported target_preconditioner state: {kind}")
 
     def rebuild_vstate(vstate, learn_phase, n_samples):
         sampler = make_sampler(n_samples)
@@ -338,8 +437,9 @@ def run_nir_experiment(
     proposal_params = proposal_model.init(fresh_key(), init_sigma)["params"]
     proposal_optimizer = optax.adam(proposal_lr_schedule)
     proposal_opt_state = proposal_optimizer.init(proposal_params)
-    target_optimizer = optax.adam(learning_rate=train_lr_schedule)
+    target_optimizer = make_target_optimizer()
     target_opt_state = target_optimizer.init(vstate.parameters)
+    target_preconditioner_state = make_target_preconditioner()
 
     history = []
     rng = fresh_key()
@@ -367,8 +467,15 @@ def run_nir_experiment(
 
         inject_external_samples(vstate, resampled)
         if target_update_applied:
-            stats, grad = vstate.expect_and_grad(ha)
-            updates, target_opt_state = target_optimizer.update(grad, target_opt_state, vstate.parameters)
+            stats, direction, target_preconditioner_state = compute_target_direction(
+                vstate, ha, target_preconditioner_state, step, learn_phase
+            )
+            direction = jax.tree.map(
+                lambda update, param: jnp.asarray(update, dtype=param.dtype),
+                direction,
+                vstate.parameters,
+            )
+            updates, target_opt_state = target_optimizer.update(direction, target_opt_state, vstate.parameters)
             vstate.parameters = optax.apply_updates(vstate.parameters, updates)
         else:
             stats = nk.stats.statistics(vstate.local_estimators(ha, chunk_size=chunk_size))
@@ -453,6 +560,44 @@ def run_nir_experiment(
         "mlp_hidden": mlp_hidden,
         "nir_strategy": "paper_inspired",
         "target_optimizer": "adam",
+        "target_sampler_name": target_sampler_name,
+        "target_optimizer_name": target_optimizer_name,
+        "target_sgd_momentum": target_sgd_momentum,
+        "target_preconditioner": target_preconditioner,
+        "target_sr_diag_shift": target_sr_diag_shift,
+        "target_sr_diag_shift_stage_1": target_sr_diag_shift_stage_1,
+        "target_sr_diag_shift_stage_2": target_sr_diag_shift_stage_2,
+        "target_sr_diag_shift_stage_3": target_sr_diag_shift_stage_3,
+        "target_sr_proj_reg": target_sr_proj_reg,
+        "target_sr_momentum": target_sr_momentum,
+        "target_sr_mode": target_sr_mode,
+        "train_lr_stage_1": train_lr_stage_1,
+        "train_lr_stage_2": train_lr_stage_2,
+        "train_lr_stage_3": train_lr_stage_3,
+        "train_lr_stage_1_iters": train_lr_stage_1_iters,
+        "train_lr_stage_2_iters": train_lr_stage_2_iters,
+        "learn_phase_stage_1": learn_phase_stage_1,
+        "learn_phase_stage_2": learn_phase_stage_2,
+        "learn_phase_stage_3": learn_phase_stage_3,
+        "nir_proposal_batch": nir_proposal_batch,
+        "nir_max_proposal_batches": nir_max_proposal_batches,
+        "nir_max_adaptive_rounds": nir_max_adaptive_rounds,
+        "nir_ess_threshold_frac": nir_ess_threshold_frac,
+        "nir_efficiency_threshold_stage_1": nir_efficiency_threshold_stage_1,
+        "nir_efficiency_threshold_stage_2": nir_efficiency_threshold_stage_2,
+        "nir_efficiency_threshold_stage_3": nir_efficiency_threshold_stage_3,
+        "nir_proposal_lr_stage_1": nir_proposal_lr_stage_1,
+        "nir_proposal_lr_stage_2": nir_proposal_lr_stage_2,
+        "nir_proposal_lr_stage_3": nir_proposal_lr_stage_3,
+        "nir_proposal_steps_stage_1": nir_proposal_steps_stage_1,
+        "nir_proposal_steps_stage_2": nir_proposal_steps_stage_2,
+        "nir_proposal_steps_stage_3": nir_proposal_steps_stage_3,
+        "nir_proposal_embed_dim": nir_proposal_embed_dim,
+        "nir_proposal_heads": nir_proposal_heads,
+        "nir_proposal_layers": nir_proposal_layers,
+        "nir_proposal_mlp": nir_proposal_mlp,
+        "nir_prob_floor": nir_prob_floor,
+        "run_tag": run_tag,
         "final_energy": float(energy[-1]),
         "best_energy_seen": float(best_energy),
         "tail_energy_window": tail_window,

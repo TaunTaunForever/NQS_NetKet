@@ -7,6 +7,8 @@ from datetime import date
 os.environ.setdefault("JAX_PLATFORM_NAME", "gpu")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("NETKET_DEBUG", "1")
+os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import jax
 import netket as nk
@@ -39,6 +41,20 @@ def _extract_real_series(log_data: dict, observable: str = "Energy") -> list[flo
     return [float(x) for x in series]
 
 
+def _json_safe(value):
+    if isinstance(value, complex):
+        return {"real": float(value.real), "imag": float(value.imag)}
+    if isinstance(value, np.ndarray):
+        return [_json_safe(item) for item in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return value
+
+
 def run_srt_experiment(
     *,
     num_sites: int,
@@ -51,6 +67,8 @@ def run_srt_experiment(
     num_heads: int = 4,
     num_layers: int = 4,
     mlp_hidden: int | None = None,
+    sampler_name: str = "pt_exchange",
+    d_max: int = 1,
 ):
     today = date.today().isoformat()
     mlp_hidden = 2 * embed_dim if mlp_hidden is None else mlp_hidden
@@ -96,7 +114,17 @@ def run_srt_experiment(
         print("Exact ground-state energy:", exact_gs)
         print()
 
-    sampler = nk.sampler.ParallelTemperingExchange(hi, graph=graph, d_max=1)
+    if sampler_name == "pt_exchange":
+        sampler = nk.sampler.ParallelTemperingExchange(hi, graph=graph, d_max=d_max)
+    elif sampler_name == "pt_local":
+        sampler = nk.sampler.ParallelTemperingLocal(hi)
+    elif sampler_name == "local":
+        n_chains = max(1, num_samples // 64)
+        sampler = nk.sampler.MetropolisLocal(hi, n_chains=n_chains)
+    elif sampler_name == "exact":
+        sampler = nk.sampler.ExactSampler(hi)
+    else:
+        raise ValueError(f"Unsupported sampler_name={sampler_name!r}")
     optimizer = optax.sgd(learning_rate=1e-2, momentum=0.9)
 
     print("\n=== Stage 1: amplitude-only warm start ===\n")
@@ -205,8 +233,11 @@ def run_srt_experiment(
     plt.savefig(f"energy_log_{job_name}.png")
     plt.close()
 
-    observables = expectations.define_observables(num_sites, hi)
-    expectations.calculate_expectations(vstate_2, ha, observables)
+    observables = expectations.define_observables(num_sites, hi, graph)
+    observable_results = expectations.calculate_expectations(vstate_2, ha, observables)
+    observables_file = f"observables_{job_name}.json"
+    with open(observables_file, "w") as f:
+        json.dump(_json_safe(observable_results), f, indent=2)
 
     summary = {
         "job_name": job_name,
@@ -227,6 +258,8 @@ def run_srt_experiment(
         "num_heads": num_heads,
         "num_layers": num_layers,
         "mlp_hidden": mlp_hidden,
+        "sampler_name": sampler_name,
+        "d_max": d_max,
         "final_energy": float(energy[-1]),
         "best_energy_seen": float(min(energy)),
         "exact_ground_state_energy": exact_gs,
@@ -235,6 +268,7 @@ def run_srt_experiment(
         "warm_log_file": f"out_warm_{job_name}.log",
         "plot_file": f"energy_{job_name}.png",
         "plot_log_file": f"energy_log_{job_name}.png",
+        "observables_file": observables_file,
     }
 
     with open(f"summary_{job_name}.json", "w") as f:

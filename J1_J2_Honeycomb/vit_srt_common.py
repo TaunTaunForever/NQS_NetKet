@@ -8,6 +8,8 @@ from pathlib import Path
 os.environ.setdefault("JAX_PLATFORM_NAME", "gpu")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("NETKET_DEBUG", "1")
+os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import jax
 import netket as nk
@@ -40,6 +42,20 @@ def _extract_real_series(log_data: dict, observable: str = "Energy") -> list[flo
     return [float(x) for x in series]
 
 
+def _json_safe(value):
+    if isinstance(value, complex):
+        return {"real": float(value.real), "imag": float(value.imag)}
+    if isinstance(value, np.ndarray):
+        return [_json_safe(item) for item in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return value
+
+
 def run_srt_experiment(
     *,
     num_sites: int,
@@ -64,6 +80,8 @@ def run_srt_experiment(
     sampler_name: str = "pt_exchange",
     d_max: int = 2,
     optimizer_name: str = "sgd",
+    resume_checkpoint_path: str | None = None,
+    run_tag: str | None = None,
 ):
     today = date.today().isoformat()
     mlp_hidden = 2 * embed_dim if mlp_hidden is None else mlp_hidden
@@ -74,6 +92,8 @@ def run_srt_experiment(
         f"{num_layers}L_{num_heads}H_{patch_size}p_"
         f"{num_samples}_samples_{today}_J1_J2_Honeycomb_ViT_SRt_site_type_relation"
     )
+    if run_tag:
+        job_name = f"{job_name}_{run_tag}"
 
     graph, extent, hi, ha = make_heisenberg_hamiltonian(num_sites, j1=j1, j2=j2)
     perm = tuple(range(graph.n_nodes))
@@ -114,8 +134,10 @@ def run_srt_experiment(
 
     if sampler_name == "pt_exchange":
         sampler = nk.sampler.ParallelTemperingExchange(hi, graph=graph, d_max=d_max)
+    elif sampler_name == "pt_local":
+        sampler = nk.sampler.ParallelTemperingLocal(hi)
     elif sampler_name == "local":
-        n_chains = max(1, num_samples // 32)
+        n_chains = max(1, num_samples // 64)
         sampler = nk.sampler.MetropolisLocal(hi, n_chains=n_chains)
     elif sampler_name == "exact":
         sampler = nk.sampler.ExactSampler(hi)
@@ -195,6 +217,14 @@ def run_srt_experiment(
         print("n_discard_per_chain:", vstate_init.n_discard_per_chain)
         initial_variables = vstate_init.variables
 
+    if resume_checkpoint_path:
+        print("\n=== Loading continuation checkpoint ===\n")
+        print("Checkpoint:", resume_checkpoint_path)
+        initial_variables = nk.experimental.vqs.variables_from_file(
+            resume_checkpoint_path,
+            initial_variables,
+        )
+
     print("\n=== Stage 2: full complex optimization ===\n")
 
     model_full = HoneycombSiteTypeRelationViT(
@@ -263,8 +293,11 @@ def run_srt_experiment(
     plt.savefig(f"energy_log_{job_name}.png")
     plt.close()
 
-    observables = expectations.define_observables(num_sites, hi)
-    expectations.calculate_expectations(vstate_2, ha, observables)
+    observables = expectations.define_observables(num_sites, hi, graph)
+    observable_results = expectations.calculate_expectations(vstate_2, ha, observables)
+    observables_file = f"observables_{job_name}.json"
+    with open(observables_file, "w") as f:
+        json.dump(_json_safe(observable_results), f, indent=2)
 
     summary = {
         "job_name": job_name,
@@ -297,6 +330,8 @@ def run_srt_experiment(
         "sampler_name": sampler_name,
         "d_max": d_max,
         "optimizer_name": optimizer_name,
+        "resume_checkpoint_path": resume_checkpoint_path,
+        "run_tag": run_tag,
         "final_energy": float(energy[-1]),
         "best_energy_seen": float(min(energy)),
         "exact_ground_state_energy": exact_gs,
@@ -305,6 +340,7 @@ def run_srt_experiment(
         "warm_log_file": warm_log_file,
         "plot_file": f"energy_{job_name}.png",
         "plot_log_file": f"energy_log_{job_name}.png",
+        "observables_file": observables_file,
     }
 
     with open(f"summary_{job_name}.json", "w") as f:
