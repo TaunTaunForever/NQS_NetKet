@@ -105,6 +105,8 @@ def proposal_log_prob(model, params, sigma, *, prob_floor):
 
 
 def sample_from_proposal(model, params, rng, n_samples, n_sites, *, prob_floor):
+    n_samples = int(n_samples)
+    n_sites = int(n_sites)
     sigma = jnp.ones((n_samples, n_sites), dtype=jnp.float64)
     for site in range(n_sites):
         logits = model.apply({"params": params}, sigma)
@@ -126,4 +128,3 @@ def train_proposal_step(model, params, opt_state, optimizer, samples, *, prob_fl
     updates, opt_state = optimizer.update(grads, opt_state, params)
     params = optax.apply_updates(params, updates)
     return params, opt_state, loss
-

@@ -15,5 +15,5 @@ run_srt_experiment(
     num_sites=72,
     j1=float(os.environ.get("J1J2_J1", "1.0")),
     j2=float(os.environ.get("J1J2_J2", "0.2")),
+    model_type=os.environ.get("J1J2_MODEL_TYPE", "site_type_relation"),
 )
-

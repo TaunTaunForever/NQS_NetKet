@@ -64,61 +64,64 @@ from proposal_network import (
     train_proposal_step,
 )
 
-LEARN_PHASE_STAGE_1 = False
-LEARN_PHASE_STAGE_2 = True
-LEARN_PHASE_STAGE_3 = True
+LEARN_PHASE_STAGE_1 = os.environ.get("GAMMA_NIR_LEARN_PHASE_STAGE_1", "true").lower() in {"1", "true", "yes", "on"}
+LEARN_PHASE_STAGE_2 = os.environ.get("GAMMA_NIR_LEARN_PHASE_STAGE_2", "true").lower() in {"1", "true", "yes", "on"}
+LEARN_PHASE_STAGE_3 = os.environ.get("GAMMA_NIR_LEARN_PHASE_STAGE_3", "true").lower() in {"1", "true", "yes", "on"}
 
 NUM_SITES = 18
 
-NUM_SAMPLES_STAGE_1 = 3*2**9
-NUM_SAMPLES_STAGE_2 = 3*2**9
-NUM_SAMPLES_STAGE_3 = 3*2**10
-NUM_ITERS_TOTAL = 1000
+NUM_SAMPLES_STAGE_1 = int(os.environ.get("GAMMA_NIR_SAMPLES_STAGE_1", str(3 * 2**9)))
+NUM_SAMPLES_STAGE_2 = int(os.environ.get("GAMMA_NIR_SAMPLES_STAGE_2", str(3 * 2**9)))
+NUM_SAMPLES_STAGE_3 = int(os.environ.get("GAMMA_NIR_SAMPLES_STAGE_3", str(3 * 2**10)))
+NUM_ITERS_TOTAL = int(os.environ.get("GAMMA_NIR_NUM_ITERS", "1000"))
 
-EMBED_DIM = 24
-NUM_HEADS = 4
-NUM_LAYERS = 2
-PATCH_SIZE = 1
+EMBED_DIM = int(os.environ.get("GAMMA_NIR_EMBED_DIM", "24"))
+NUM_HEADS = int(os.environ.get("GAMMA_NIR_NUM_HEADS", "4"))
+NUM_LAYERS = int(os.environ.get("GAMMA_NIR_NUM_LAYERS", "2"))
+PATCH_SIZE = int(os.environ.get("GAMMA_NIR_PATCH_SIZE", "1"))
 MLP_HIDDEN_DIM = 2 * EMBED_DIM
-CHUNK_SIZE = 1024
+chunk_size_env = os.environ.get("GAMMA_NIR_CHUNK_SIZE", "1024").strip().lower()
+CHUNK_SIZE = None if chunk_size_env in {"", "none"} else int(chunk_size_env)
 
-TRAIN_LR_STAGE_1 = 1e-3
-TRAIN_LR_STAGE_2 = 1e-3
-TRAIN_LR_STAGE_3 = 1e-3
-TRAIN_LR_STAGE_1_ITERS = 100
-TRAIN_LR_STAGE_2_ITERS = 6000
+TRAIN_LR_STAGE_1 = float(os.environ.get("GAMMA_NIR_LR_STAGE_1", "1e-3"))
+TRAIN_LR_STAGE_2 = float(os.environ.get("GAMMA_NIR_LR_STAGE_2", "1e-3"))
+TRAIN_LR_STAGE_3 = float(os.environ.get("GAMMA_NIR_LR_STAGE_3", "1e-3"))
+TRAIN_LR_STAGE_1_ITERS = int(os.environ.get("GAMMA_NIR_LR_STAGE_1_ITERS", "100"))
+TRAIN_LR_STAGE_2_ITERS = int(os.environ.get("GAMMA_NIR_LR_STAGE_2_ITERS", "6000"))
 LOG_STEP_SIZE = 1
 WRITE_EVERY = 1
 SAVE_PARAMS_EVERY = 25
 
 # ---------- NIR proposal network ----------
-NIR_PROPOSAL_BATCH = 3*2**9
-NIR_MAX_PROPOSAL_BATCHES = 12
-NIR_MAX_ADAPTIVE_ROUNDS = 6
-NIR_ESS_THRESHOLD_FRAC = 0.4
-NIR_EFFICIENCY_THRESHOLD_STAGE_1 = 0.10
-NIR_EFFICIENCY_THRESHOLD_STAGE_2 = 0.10
-NIR_EFFICIENCY_THRESHOLD_STAGE_3 = 0.10
-NIR_PROPOSAL_LR_STAGE_1 = 1e-3
-NIR_PROPOSAL_LR_STAGE_2 = 1e-3
-NIR_PROPOSAL_LR_STAGE_3 = 1e-3
-NIR_PROPOSAL_STEPS_STAGE_1 = 1
-NIR_PROPOSAL_STEPS_STAGE_2 = 1
-NIR_PROPOSAL_STEPS_STAGE_3 = 1
-NIR_PROPOSAL_EMBED_DIM = 32
-NIR_PROPOSAL_HEADS = 4
-NIR_PROPOSAL_LAYERS = 4
+NIR_PROPOSAL_BATCH = int(os.environ.get("GAMMA_NIR_PROPOSAL_BATCH", str(3 * 2**9)))
+NIR_MAX_PROPOSAL_BATCHES = int(os.environ.get("GAMMA_NIR_MAX_PROPOSAL_BATCHES", "12"))
+NIR_MAX_ADAPTIVE_ROUNDS = int(os.environ.get("GAMMA_NIR_MAX_ADAPTIVE_ROUNDS", "6"))
+NIR_ESS_THRESHOLD_FRAC = float(os.environ.get("GAMMA_NIR_ESS_THRESHOLD_FRAC", "0.4"))
+NIR_EFFICIENCY_THRESHOLD_STAGE_1 = float(os.environ.get("GAMMA_NIR_EFF_STAGE_1", "0.10"))
+NIR_EFFICIENCY_THRESHOLD_STAGE_2 = float(os.environ.get("GAMMA_NIR_EFF_STAGE_2", "0.10"))
+NIR_EFFICIENCY_THRESHOLD_STAGE_3 = float(os.environ.get("GAMMA_NIR_EFF_STAGE_3", "0.10"))
+NIR_PROPOSAL_LR_STAGE_1 = float(os.environ.get("GAMMA_NIR_PROPOSAL_LR_STAGE_1", "1e-3"))
+NIR_PROPOSAL_LR_STAGE_2 = float(os.environ.get("GAMMA_NIR_PROPOSAL_LR_STAGE_2", "1e-3"))
+NIR_PROPOSAL_LR_STAGE_3 = float(os.environ.get("GAMMA_NIR_PROPOSAL_LR_STAGE_3", "1e-3"))
+NIR_PROPOSAL_STEPS_STAGE_1 = int(os.environ.get("GAMMA_NIR_PROPOSAL_STEPS_STAGE_1", "1"))
+NIR_PROPOSAL_STEPS_STAGE_2 = int(os.environ.get("GAMMA_NIR_PROPOSAL_STEPS_STAGE_2", "1"))
+NIR_PROPOSAL_STEPS_STAGE_3 = int(os.environ.get("GAMMA_NIR_PROPOSAL_STEPS_STAGE_3", "1"))
+NIR_PROPOSAL_EMBED_DIM = int(os.environ.get("GAMMA_NIR_PROPOSAL_EMBED_DIM", "32"))
+NIR_PROPOSAL_HEADS = int(os.environ.get("GAMMA_NIR_PROPOSAL_HEADS", "4"))
+NIR_PROPOSAL_LAYERS = int(os.environ.get("GAMMA_NIR_PROPOSAL_LAYERS", "4"))
 NIR_PROPOSAL_MLP = 2 * NIR_PROPOSAL_EMBED_DIM
-NIR_PROB_FLOOR = 1e-6
+NIR_PROB_FLOOR = float(os.environ.get("GAMMA_NIR_PROB_FLOOR", "1e-6"))
 
 # ---------- NQS target update ----------
-TARGET_PRECONDITIONER = "minsr"
-TARGET_SR_DIAG_SHIFT_STAGE_1 = 1e-3
-TARGET_SR_DIAG_SHIFT_STAGE_2 = 1e-4
-TARGET_SR_DIAG_SHIFT_STAGE_3 = 1e-4
-TARGET_SR_PROJ_REG = None
-TARGET_SR_MOMENTUM = 0.0
-TARGET_SR_MODE = "complex"
+TARGET_PRECONDITIONER = os.environ.get("GAMMA_NIR_TARGET_PRECONDITIONER", "minsr")
+TARGET_SR_DIAG_SHIFT_STAGE_1 = float(os.environ.get("GAMMA_NIR_TARGET_SR_DIAG_SHIFT_STAGE_1", "1e-3"))
+TARGET_SR_DIAG_SHIFT_STAGE_2 = float(os.environ.get("GAMMA_NIR_TARGET_SR_DIAG_SHIFT_STAGE_2", "1e-4"))
+TARGET_SR_DIAG_SHIFT_STAGE_3 = float(os.environ.get("GAMMA_NIR_TARGET_SR_DIAG_SHIFT_STAGE_3", "1e-4"))
+target_proj_reg_env = os.environ.get("GAMMA_NIR_TARGET_SR_PROJ_REG", "none").strip().lower()
+TARGET_SR_PROJ_REG = None if target_proj_reg_env in {"", "none"} else float(target_proj_reg_env)
+target_momentum_env = os.environ.get("GAMMA_NIR_TARGET_SR_MOMENTUM", "0.0").strip().lower()
+TARGET_SR_MOMENTUM = None if target_momentum_env in {"none"} else float(target_momentum_env)
+TARGET_SR_MODE = os.environ.get("GAMMA_NIR_TARGET_SR_MODE", "complex")
 
 TRAIN_LR_BOUNDARY_1 = TRAIN_LR_STAGE_1_ITERS
 TRAIN_LR_BOUNDARY_2 = TRAIN_LR_STAGE_1_ITERS + TRAIN_LR_STAGE_2_ITERS
@@ -163,6 +166,7 @@ PROPOSAL_LR_SCHEDULE = optax.join_schedules(
 TARGET_CHAIN_LENGTH = 1024
 
 TODAY = date.today().isoformat()
+RUN_TAG = os.environ.get("GAMMA_NIR_RUN_TAG", "").strip()
 RESUME_SOURCE_SUMMARY = os.environ.get("NIR_RESUME_SOURCE_SUMMARY", "").strip()
 RESUME_MODE = os.environ.get("NIR_RESUME_MODE", "latest").strip().lower()
 RESUME_ADDITIONAL_ITERS = int(
@@ -178,6 +182,8 @@ JOB_BASE = (
     f"{NUM_SAMPLES_STAGE_1}to{NUM_SAMPLES_STAGE_3}_samples_"
     f"{TODAY}_Gamma_ViT_NIR_site_type_relation_multiphase"
 )
+if RUN_TAG:
+    JOB_BASE = f"{JOB_BASE}_{RUN_TAG}"
 resume_summary_path = None
 resume_summary = None
 resume_source_run_dir = None

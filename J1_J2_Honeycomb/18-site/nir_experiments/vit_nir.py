@@ -11,7 +11,7 @@ if str(ROOT / "nir_experiments") not in sys.path:
 from vit_nir_common import run_nir_experiment
 
 
-embed_dim = int(os.environ.get("J1J2_NIR_EMBED_DIM", "24"))
+embed_dim = int(os.environ.get("J1J2_NIR_EMBED_DIM", "8"))
 mlp_hidden = int(os.environ.get("J1J2_NIR_MLP_HIDDEN", str(2 * embed_dim)))
 num_iters_total = int(os.environ.get("J1J2_NIR_NUM_ITERS", "1000"))
 train_lr_stage_1_iters = int(
@@ -31,10 +31,11 @@ chunk_size = None if chunk_size_env in {"", "none"} else int(chunk_size_env)
 run_nir_experiment(
     num_sites=18,
     j1=float(os.environ.get("J1J2_J1", "1.0")),
-    j2=float(os.environ.get("J1J2_J2", "0.0")),
+    j2=float(os.environ.get("J1J2_J2", "0.05")),
     num_samples_stage_1=int(os.environ.get("J1J2_NIR_SAMPLES_STAGE_1", str(3 * 2**8))),
     num_samples_stage_2=int(os.environ.get("J1J2_NIR_SAMPLES_STAGE_2", str(3 * 2**8))),
     num_samples_stage_3=int(os.environ.get("J1J2_NIR_SAMPLES_STAGE_3", str(3 * 2**9))),
+    num_samples_stage_4=int(os.environ.get("J1J2_NIR_SAMPLES_STAGE_4", str(3 * 2**10))),
     num_iters_total=num_iters_total,
     patch_size=int(os.environ.get("J1J2_NIR_PATCH_SIZE", "1")),
     embed_dim=embed_dim,
@@ -45,11 +46,14 @@ run_nir_experiment(
     train_lr_stage_1=float(os.environ.get("J1J2_NIR_LR_STAGE_1", "1e-2")),
     train_lr_stage_2=float(os.environ.get("J1J2_NIR_LR_STAGE_2", "1e-2")),
     train_lr_stage_3=float(os.environ.get("J1J2_NIR_LR_STAGE_3", "1e-3")),
+    train_lr_stage_4=float(os.environ.get("J1J2_NIR_LR_STAGE_4", "3e-4")),
     train_lr_stage_1_iters=train_lr_stage_1_iters,
     train_lr_stage_2_iters=train_lr_stage_2_iters,
-    learn_phase_stage_1=os.environ.get("J1J2_NIR_LEARN_PHASE_STAGE_1", "false").lower() in {"1","true","yes","on"},
+    train_lr_stage_3_iters=int(os.environ.get("J1J2_NIR_LR_STAGE_3_ITERS", "200")),
+    learn_phase_stage_1=os.environ.get("J1J2_NIR_LEARN_PHASE_STAGE_1", "true").lower() in {"1","true","yes","on"},
     learn_phase_stage_2=os.environ.get("J1J2_NIR_LEARN_PHASE_STAGE_2", "true").lower() in {"1","true","yes","on"},
     learn_phase_stage_3=os.environ.get("J1J2_NIR_LEARN_PHASE_STAGE_3", "true").lower() in {"1","true","yes","on"},
+    learn_phase_stage_4=os.environ.get("J1J2_NIR_LEARN_PHASE_STAGE_4", "true").lower() in {"1","true","yes","on"},
     target_sampler_name=os.environ.get("J1J2_NIR_TARGET_SAMPLER", "local"),
     target_optimizer_name=os.environ.get("J1J2_NIR_TARGET_OPTIMIZER", "sgd"),
     target_sgd_momentum=float(os.environ.get("J1J2_NIR_TARGET_MOMENTUM", "0.0")),
@@ -58,6 +62,7 @@ run_nir_experiment(
     target_sr_diag_shift_stage_1=float(os.environ.get("J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_1", "1e-3")),
     target_sr_diag_shift_stage_2=float(os.environ.get("J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_2", "1e-4")),
     target_sr_diag_shift_stage_3=float(os.environ.get("J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_3", "1e-5")),
+    target_sr_diag_shift_stage_4=float(os.environ.get("J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_4", "1e-6")),
     target_sr_proj_reg=(
         None
         if os.environ.get("J1J2_NIR_TARGET_SR_PROJ_REG") in {None, "", "none", "None"}
@@ -76,12 +81,15 @@ run_nir_experiment(
     nir_efficiency_threshold_stage_1=float(os.environ.get("J1J2_NIR_EFF_STAGE_1", "0.15")),
     nir_efficiency_threshold_stage_2=float(os.environ.get("J1J2_NIR_EFF_STAGE_2", "0.15")),
     nir_efficiency_threshold_stage_3=float(os.environ.get("J1J2_NIR_EFF_STAGE_3", "0.20")),
+    nir_efficiency_threshold_stage_4=float(os.environ.get("J1J2_NIR_EFF_STAGE_4", "0.25")),
     nir_proposal_lr_stage_1=float(os.environ.get("J1J2_NIR_PROPOSAL_LR_STAGE_1", "3e-3")),
     nir_proposal_lr_stage_2=float(os.environ.get("J1J2_NIR_PROPOSAL_LR_STAGE_2", "3e-3")),
     nir_proposal_lr_stage_3=float(os.environ.get("J1J2_NIR_PROPOSAL_LR_STAGE_3", "3e-4")),
+    nir_proposal_lr_stage_4=float(os.environ.get("J1J2_NIR_PROPOSAL_LR_STAGE_4", "1e-4")),
     nir_proposal_steps_stage_1=int(os.environ.get("J1J2_NIR_PROPOSAL_STEPS_STAGE_1", "4")),
     nir_proposal_steps_stage_2=int(os.environ.get("J1J2_NIR_PROPOSAL_STEPS_STAGE_2", "2")),
     nir_proposal_steps_stage_3=int(os.environ.get("J1J2_NIR_PROPOSAL_STEPS_STAGE_3", "1")),
+    nir_proposal_steps_stage_4=int(os.environ.get("J1J2_NIR_PROPOSAL_STEPS_STAGE_4", "1")),
     nir_proposal_embed_dim=nir_proposal_embed_dim,
     nir_proposal_heads=int(os.environ.get("J1J2_NIR_PROPOSAL_HEADS", "4")),
     nir_proposal_layers=int(os.environ.get("J1J2_NIR_PROPOSAL_LAYERS", "2")),

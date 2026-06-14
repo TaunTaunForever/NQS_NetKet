@@ -4,6 +4,7 @@ import json
 import os
 from datetime import date
 from pathlib import Path
+import math
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "gpu")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
@@ -20,6 +21,10 @@ from scipy.sparse.linalg import eigsh
 
 import expectations
 from common import make_heisenberg_hamiltonian
+from vit_site_type_relation_gated_pool_model import (
+    HoneycombSiteTypeRelationGatedPoolViT,
+    build_honeycomb_bond_oriented_relation_matrix,
+)
 from vit_site_type_relation_model import (
     HoneycombSiteTypeRelationViT,
     build_bipartite_site_type_ids,
@@ -56,6 +61,14 @@ def _json_safe(value):
     return value
 
 
+def _compatible_chunk_size(requested: int | None, n_samples: int) -> int | None:
+    if requested is None or requested <= 0:
+        return None
+    if n_samples % requested == 0:
+        return requested
+    return math.gcd(requested, n_samples) or None
+
+
 def run_srt_experiment(
     *,
     num_sites: int,
@@ -74,23 +87,44 @@ def run_srt_experiment(
     learning_rate: float = 1e-2,
     learning_rate_warm: float | None = None,
     learning_rate_main: float | None = None,
+    learning_rate_refine: float | None = None,
     momentum: float = 0.9,
     diag_shift_warm: float = 1e-4,
     diag_shift_main: float = 1e-3,
+    diag_shift_refine: float | None = None,
     sampler_name: str = "pt_exchange",
+    sampler_name_refine: str | None = None,
     d_max: int = 2,
+    d_max_refine: int | None = None,
     optimizer_name: str = "sgd",
+    num_samples_refine: int | None = None,
+    num_iters_refine: int = 0,
     resume_checkpoint_path: str | None = None,
     run_tag: str | None = None,
+    model_type: str = "site_type_relation",
 ):
     today = date.today().isoformat()
     mlp_hidden = 2 * embed_dim if mlp_hidden is None else mlp_hidden
     learning_rate_warm = learning_rate if learning_rate_warm is None else learning_rate_warm
     learning_rate_main = learning_rate if learning_rate_main is None else learning_rate_main
+    learning_rate_refine = learning_rate_main if learning_rate_refine is None else learning_rate_refine
+    diag_shift_refine = diag_shift_main if diag_shift_refine is None else diag_shift_refine
+    sampler_name_refine = sampler_name if sampler_name_refine is None else sampler_name_refine
+    d_max_refine = d_max if d_max_refine is None else d_max_refine
+    num_samples_refine = num_samples if num_samples_refine is None else num_samples_refine
+    chunk_size_main = _compatible_chunk_size(chunk_size, num_samples)
+    chunk_size_refine = _compatible_chunk_size(chunk_size, num_samples_refine)
+    model_tag = {
+        "site_type_relation": "site_type_relation",
+        "site_type_relation_gated_pool_bond": "site_type_relation_gated_pool_bond",
+    }.get(model_type)
+    if model_tag is None:
+        raise ValueError(f"Unsupported model_type={model_type!r}")
+
     job_name = (
         f"J1={j1}_J2={j2}_{num_sites}-site_"
         f"{num_layers}L_{num_heads}H_{patch_size}p_"
-        f"{num_samples}_samples_{today}_J1_J2_Honeycomb_ViT_SRt_site_type_relation"
+        f"{num_samples}_samples_{today}_J1_J2_Honeycomb_ViT_SRt_{model_tag}"
     )
     if run_tag:
         job_name = f"{job_name}_{run_tag}"
@@ -109,8 +143,32 @@ def run_srt_experiment(
         if patch_size == 1
         else site_relation_to_patch_relation_expanded(site_relation_matrix, patch_size)
     )
+    bond_oriented_site_relation_matrix = build_honeycomb_bond_oriented_relation_matrix(
+        graph, permutation=perm
+    )
+    bond_oriented_relation_matrix = (
+        bond_oriented_site_relation_matrix
+        if patch_size == 1
+        else site_relation_to_patch_relation_expanded(
+            bond_oriented_site_relation_matrix, patch_size
+        )
+    )
     num_relation_types = max(max(row) for row in relation_matrix) + 1
+    num_bond_oriented_relation_types = (
+        max(max(row) for row in bond_oriented_relation_matrix) + 1
+    )
     num_site_types = max(token_site_type_ids) + 1
+
+    active_relation_matrix = (
+        bond_oriented_relation_matrix
+        if model_type == "site_type_relation_gated_pool_bond"
+        else relation_matrix
+    )
+    active_num_relation_types = (
+        num_bond_oriented_relation_types
+        if model_type == "site_type_relation_gated_pool_bond"
+        else num_relation_types
+    )
 
     print(f"Defining {num_sites}-site J1-J2 Honeycomb lattice")
     print("___________________________________________________")
@@ -118,10 +176,15 @@ def run_srt_experiment(
     print("Sites:", graph.n_nodes)
     print("Edges:", graph.n_edges)
     print("Neighbor orders:", sorted(set(color for *_ij, color in graph.edges(return_color=True))))
+    print("Model type:", model_type)
     print("Site type ids:", token_site_type_ids)
     print("Number of site types:", num_site_types)
-    print("Relation matrix shape:", (len(relation_matrix), len(relation_matrix[0])))
-    print("Number of relation types:", num_relation_types)
+    print(
+        "Relation matrix shape:",
+        (len(active_relation_matrix), len(active_relation_matrix[0])),
+    )
+    print("Number of relation types:", active_num_relation_types)
+    print("Bond-oriented relation types:", num_bond_oriented_relation_types)
     print()
 
     exact_gs = None
@@ -132,17 +195,19 @@ def run_srt_experiment(
         print("Exact ground-state energy:", exact_gs)
         print()
 
-    if sampler_name == "pt_exchange":
-        sampler = nk.sampler.ParallelTemperingExchange(hi, graph=graph, d_max=d_max)
-    elif sampler_name == "pt_local":
-        sampler = nk.sampler.ParallelTemperingLocal(hi)
-    elif sampler_name == "local":
-        n_chains = max(1, num_samples // 64)
-        sampler = nk.sampler.MetropolisLocal(hi, n_chains=n_chains)
-    elif sampler_name == "exact":
-        sampler = nk.sampler.ExactSampler(hi)
-    else:
-        raise ValueError(f"Unsupported sampler_name={sampler_name!r}")
+    def build_sampler(name: str, n_samples: int, d_max_value: int):
+        if name == "pt_exchange":
+            return nk.sampler.ParallelTemperingExchange(hi, graph=graph, d_max=d_max_value)
+        if name == "pt_local":
+            return nk.sampler.ParallelTemperingLocal(hi)
+        if name == "local":
+            n_chains = max(1, n_samples // 32)
+            return nk.sampler.MetropolisLocal(hi, n_chains=n_chains)
+        if name == "exact":
+            return nk.sampler.ExactSampler(hi)
+        raise ValueError(f"Unsupported sampler_name={name!r}")
+
+    sampler = build_sampler(sampler_name, num_samples, d_max)
 
     def build_optimizer(lr: float):
         if optimizer_name == "sgd":
@@ -151,27 +216,42 @@ def run_srt_experiment(
             return optax.adam(learning_rate=lr)
         raise ValueError(f"Unsupported optimizer_name={optimizer_name!r}")
 
-    warm_log_file = None
-    if num_iters_warm > 0:
-        print("\n=== Stage 1: amplitude-only warm start ===\n")
-
-        model_warm = HoneycombSiteTypeRelationViT(
+    def build_model(*, learn_phase: bool):
+        if model_type == "site_type_relation_gated_pool_bond":
+            return HoneycombSiteTypeRelationGatedPoolViT(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                num_layers=num_layers,
+                mlp_hidden_dim=mlp_hidden,
+                patch_size=patch_size,
+                learn_phase=learn_phase,
+                relation_matrix=bond_oriented_relation_matrix,
+                site_type_ids=token_site_type_ids,
+                permutation=perm,
+            )
+        return HoneycombSiteTypeRelationViT(
             embed_dim=embed_dim,
             num_heads=num_heads,
             num_layers=num_layers,
             mlp_hidden_dim=mlp_hidden,
             patch_size=patch_size,
-            learn_phase=False,
+            learn_phase=learn_phase,
             relation_matrix=relation_matrix,
             site_type_ids=token_site_type_ids,
             permutation=perm,
         )
 
+    warm_log_file = None
+    if num_iters_warm > 0:
+        print("\n=== Stage 1: amplitude-only warm start ===\n")
+
+        model_warm = build_model(learn_phase=False)
+
         vstate_1 = nk.vqs.MCState(
             sampler=sampler,
             model=model_warm,
             n_samples=num_samples,
-            chunk_size=chunk_size,
+            chunk_size=chunk_size_main,
         )
 
         print("num_samples:", num_samples)
@@ -194,22 +274,12 @@ def run_srt_experiment(
         initial_variables = vstate_1.variables
     else:
         print("\n=== Stage 1: skipped amplitude-only warm start ===\n")
-        model_init = HoneycombSiteTypeRelationViT(
-            embed_dim=embed_dim,
-            num_heads=num_heads,
-            num_layers=num_layers,
-            mlp_hidden_dim=mlp_hidden,
-            patch_size=patch_size,
-            learn_phase=learn_phase_main,
-            relation_matrix=relation_matrix,
-            site_type_ids=token_site_type_ids,
-            permutation=perm,
-        )
+        model_init = build_model(learn_phase=learn_phase_main)
         vstate_init = nk.vqs.MCState(
             sampler=sampler,
             model=model_init,
             n_samples=num_samples,
-            chunk_size=chunk_size,
+            chunk_size=chunk_size_main,
         )
         print("num_samples:", num_samples)
         print("num params:", vstate_init.n_parameters)
@@ -227,24 +297,14 @@ def run_srt_experiment(
 
     print("\n=== Stage 2: full complex optimization ===\n")
 
-    model_full = HoneycombSiteTypeRelationViT(
-        embed_dim=embed_dim,
-        num_heads=num_heads,
-        num_layers=num_layers,
-        mlp_hidden_dim=mlp_hidden,
-        patch_size=patch_size,
-        learn_phase=learn_phase_main,
-        relation_matrix=relation_matrix,
-        site_type_ids=token_site_type_ids,
-        permutation=perm,
-    )
+    model_full = build_model(learn_phase=learn_phase_main)
 
     vstate_2 = nk.vqs.MCState(
         sampler=sampler,
         model=model_full,
         n_samples=num_samples,
         variables=initial_variables,
-        chunk_size=chunk_size,
+        chunk_size=chunk_size_main,
     )
 
     obs = {
@@ -259,16 +319,48 @@ def run_srt_experiment(
         variational_state=vstate_2,
         diag_shift=diag_shift_main,
     )
+    stage2_out = f"out_{job_name}_stage2"
     driver_2.run(
         n_iter=num_iters,
         obs=obs,
-        out=f"out_{job_name}",
+        out=stage2_out,
         save_params_every=10,
     )
 
-    with open(f"out_{job_name}.log") as f:
+    with open(f"{stage2_out}.log") as f:
         data = json.load(f)
     energy = _extract_real_series(data, "Energy")
+
+    final_vstate = vstate_2
+    refine_log_file = None
+    if num_iters_refine > 0:
+        print("\n=== Stage 3: local refinement ===\n")
+        sampler_refine = build_sampler(sampler_name_refine, num_samples_refine, d_max_refine)
+        vstate_3 = nk.vqs.MCState(
+            sampler=sampler_refine,
+            model=model_full,
+            n_samples=num_samples_refine,
+            variables=vstate_2.variables,
+            chunk_size=chunk_size_refine,
+        )
+        driver_3 = nk.driver.VMC_SR(
+            hamiltonian=ha,
+            optimizer=build_optimizer(learning_rate_refine),
+            variational_state=vstate_3,
+            diag_shift=diag_shift_refine,
+        )
+        stage3_out = f"out_{job_name}_stage3"
+        driver_3.run(
+            n_iter=num_iters_refine,
+            obs=obs,
+            out=stage3_out,
+            save_params_every=10,
+        )
+        with open(f"{stage3_out}.log") as f:
+            data3 = json.load(f)
+        energy.extend(_extract_real_series(data3, "Energy"))
+        final_vstate = vstate_3
+        refine_log_file = f"{stage3_out}.log"
 
     with open(f"mean_energy_run_{job_name}.txt", "w") as f:
         for item in energy:
@@ -294,7 +386,7 @@ def run_srt_experiment(
     plt.close()
 
     observables = expectations.define_observables(num_sites, hi, graph)
-    observable_results = expectations.calculate_expectations(vstate_2, ha, observables)
+    observable_results = expectations.calculate_expectations(final_vstate, ha, observables)
     observables_file = f"observables_{job_name}.json"
     with open(observables_file, "w") as f:
         json.dump(_json_safe(observable_results), f, indent=2)
@@ -307,15 +399,20 @@ def run_srt_experiment(
         "num_iters_warm": num_iters_warm,
         "num_iters": num_iters,
         "chunk_size": chunk_size,
+        "chunk_size_main": chunk_size_main,
+        "chunk_size_refine": chunk_size_refine,
         "j1": j1,
         "j2": j2,
         "patch_size": patch_size,
         "permutation": list(perm),
         "site_type_ids": list(token_site_type_ids),
         "num_site_types": num_site_types,
-        "relation_matrix": [list(row) for row in relation_matrix],
-        "num_relation_types": num_relation_types,
-        "site_type_relation_model": True,
+        "relation_matrix": [list(row) for row in active_relation_matrix],
+        "num_relation_types": active_num_relation_types,
+        "site_type_relation_model": model_type == "site_type_relation",
+        "model_type": model_type,
+        "bond_oriented_relation_matrix": [list(row) for row in bond_oriented_relation_matrix],
+        "num_bond_oriented_relation_types": num_bond_oriented_relation_types,
         "embed_dim": embed_dim,
         "num_heads": num_heads,
         "num_layers": num_layers,
@@ -327,20 +424,31 @@ def run_srt_experiment(
         "learn_phase_main": learn_phase_main,
         "diag_shift_warm": diag_shift_warm,
         "diag_shift_main": diag_shift_main,
+        "learning_rate_refine": learning_rate_refine,
+        "diag_shift_refine": diag_shift_refine,
         "sampler_name": sampler_name,
+        "sampler_name_refine": sampler_name_refine,
         "d_max": d_max,
+        "d_max_refine": d_max_refine,
         "optimizer_name": optimizer_name,
+        "num_samples_refine": num_samples_refine,
+        "num_iters_refine": num_iters_refine,
         "resume_checkpoint_path": resume_checkpoint_path,
         "run_tag": run_tag,
         "final_energy": float(energy[-1]),
         "best_energy_seen": float(min(energy)),
         "exact_ground_state_energy": exact_gs,
         "mean_energy_file": f"mean_energy_run_{job_name}.txt",
-        "log_file": f"out_{job_name}.log",
+        "log_file": f"{stage2_out}.log",
+        "refine_log_file": refine_log_file,
         "warm_log_file": warm_log_file,
         "plot_file": f"energy_{job_name}.png",
         "plot_log_file": f"energy_log_{job_name}.png",
         "observables_file": observables_file,
+        "tail_mean_last_20": float(np.mean(energy[-20:])) if len(energy) >= 20 else None,
+        "tail_mean_last_50": float(np.mean(energy[-50:])) if len(energy) >= 50 else None,
+        "tail_mean_last_100": float(np.mean(energy[-100:])) if len(energy) >= 100 else None,
+        "tail_std_last_50": float(np.std(energy[-50:])) if len(energy) >= 50 else None,
     }
 
     with open(f"summary_{job_name}.json", "w") as f:
