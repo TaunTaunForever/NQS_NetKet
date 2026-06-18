@@ -95,5 +95,6 @@ run_nir_experiment(
     nir_proposal_layers=int(os.environ.get("J1J2_NIR_PROPOSAL_LAYERS", "2")),
     nir_proposal_mlp=nir_proposal_mlp,
     nir_prob_floor=float(os.environ.get("J1J2_NIR_PROB_FLOOR", "1e-6")),
+    model_type=os.environ.get("J1J2_NIR_MODEL_TYPE", "site_type_relation_gated_pool_bond"),
     run_tag=os.environ.get("J1J2_NIR_RUN_TAG"),
 )

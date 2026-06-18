@@ -13,16 +13,16 @@ from vit_srt_common import run_srt_experiment
 
 run_srt_experiment(
     site_dir=THIS_DIR,
-    num_sites=18,
-    num_samples_warmup=int(os.environ.get("GAMMA_NUM_SAMPLES_WARMUP", str(2**10))),
-    num_samples=int(os.environ.get("GAMMA_NUM_SAMPLES", str(2**11))),
-    num_iters_warm=int(os.environ.get("GAMMA_NUM_ITERS_WARM", "1000")),
-    num_iters_main=int(os.environ.get("GAMMA_NUM_ITERS_MAIN", "4000")),
-    num_iters_refine=int(os.environ.get("GAMMA_NUM_ITERS_REFINE", "10000")),
+    num_sites=8,
+    num_samples_warmup=int(os.environ.get("GAMMA_NUM_SAMPLES_WARMUP", str(3 * 2**8))),
+    num_samples=int(os.environ.get("GAMMA_NUM_SAMPLES", str(3 * 2**9))),
+    num_iters_warm=int(os.environ.get("GAMMA_NUM_ITERS_WARM", "100")),
+    num_iters_main=int(os.environ.get("GAMMA_NUM_ITERS_MAIN", "1000")),
+    num_iters_refine=int(os.environ.get("GAMMA_NUM_ITERS_REFINE", "2000")),
     patch_size=int(os.environ.get("GAMMA_PATCH_SIZE", "1")),
     embed_dim=int(os.environ.get("GAMMA_EMBED_DIM", "32")),
     num_heads=int(os.environ.get("GAMMA_NUM_HEADS", "4")),
-    num_layers=int(os.environ.get("GAMMA_NUM_LAYERS", "2")),
+    num_layers=int(os.environ.get("GAMMA_NUM_LAYERS", "4")),
     mlp_hidden_dim=(
         int(os.environ["GAMMA_MLP_HIDDEN_DIM"])
         if "GAMMA_MLP_HIDDEN_DIM" in os.environ
@@ -40,7 +40,7 @@ run_srt_experiment(
     refine_sr_momentum=float(os.environ.get("GAMMA_REFINE_SR_MOMENTUM", "0.0")),
     n_discard_per_chain=int(os.environ.get("GAMMA_N_DISCARD_PER_CHAIN", "4")),
     target_chain_length=int(os.environ.get("GAMMA_TARGET_CHAIN_LENGTH", "64")),
-    pt_sweep_size=int(os.environ.get("GAMMA_PT_SWEEP_SIZE", str(18 * 2))),
+    pt_sweep_size=int(os.environ.get("GAMMA_PT_SWEEP_SIZE", str(8 * 2))),
     chunk_size=(
         None
         if os.environ.get("GAMMA_CHUNK_SIZE", "none").strip().lower() in {"", "none"}
@@ -60,6 +60,8 @@ run_srt_experiment(
     use_experimental_vmc_sr=os.environ.get("GAMMA_USE_EXPERIMENTAL_VMC_SR", "false").lower() in {"1", "true", "yes", "on"},
     experimental_use_ntk=os.environ.get("GAMMA_EXPERIMENTAL_USE_NTK", "true").lower() in {"1", "true", "yes", "on"},
     experimental_on_the_fly=os.environ.get("GAMMA_EXPERIMENTAL_ON_THE_FLY", "true").lower() in {"1", "true", "yes", "on"},
+    sampler_name=os.environ.get("GAMMA_SAMPLER", "local"),
+    sampler_name_refine=os.environ.get("GAMMA_SAMPLER_REFINE", "pt_local"),
     model_type=os.environ.get("GAMMA_MODEL_TYPE", "site_type_relation"),
     run_tag=os.environ.get("GAMMA_RUN_TAG"),
 )

@@ -470,20 +470,20 @@ def run_nir_experiment(
                 prob_floor=nir_prob_floor,
             )
 
-            proposal_batches.append(np.asarray(proposal_samples))
-            log_target_batches.append(np.asarray(log_target))
-            log_proposal_batches.append(np.asarray(log_proposal))
+            proposal_batches.append(proposal_samples)
+            log_target_batches.append(log_target)
+            log_proposal_batches.append(log_proposal)
 
-            stacked_target = np.concatenate(log_target_batches, axis=0)
-            stacked_proposal = np.concatenate(log_proposal_batches, axis=0)
+            stacked_target = jnp.concatenate(log_target_batches, axis=0)
+            stacked_proposal = jnp.concatenate(log_proposal_batches, axis=0)
             weights = normalised_importance_weights_from_log_probs(stacked_target, stacked_proposal)
             ess = effective_sample_size(weights)
-            if ess >= ess_threshold:
+            if float(ess) >= ess_threshold:
                 break
 
-        all_samples = np.concatenate(proposal_batches, axis=0)
-        all_log_target = np.concatenate(log_target_batches, axis=0)
-        all_log_proposal = np.concatenate(log_proposal_batches, axis=0)
+        all_samples = jnp.concatenate(proposal_batches, axis=0)
+        all_log_target = jnp.concatenate(log_target_batches, axis=0)
+        all_log_proposal = jnp.concatenate(log_proposal_batches, axis=0)
         weights = normalised_importance_weights_from_log_probs(all_log_target, all_log_proposal)
         return all_samples, all_log_target, all_log_proposal, weights, rng
 
@@ -506,15 +506,16 @@ def run_nir_experiment(
             )
             ess = effective_sample_size(weights)
             eff = sampling_efficiency(weights)
-            resampled, _indices, _weights = importance_resample(
+            resampled, _indices, _weights, rng = importance_resample(
                 all_samples,
                 all_log_target,
                 all_log_proposal,
                 n_samples=vstate.n_samples,
+                rng=rng,
             )
             final_resampled = resampled
 
-            train_batch = jnp.asarray(resampled)
+            train_batch = resampled
             last_loss = None
             for _ in range(proposal_steps):
                 params, opt_state, last_loss = train_proposal_step(
@@ -529,7 +530,7 @@ def run_nir_experiment(
             round_summaries.append(
                 {
                     "round": round_idx,
-                    "proposal_pool": int(len(all_samples)),
+                    "proposal_pool": int(all_samples.shape[0]),
                     "ess": float(ess),
                     "efficiency": float(eff),
                     "proposal_steps": int(proposal_steps),
