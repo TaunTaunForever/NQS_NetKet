@@ -20,8 +20,8 @@ run_srt_experiment(
     num_iters_main=int(os.environ.get("GAMMA_NUM_ITERS_MAIN", "1000")),
     num_iters_refine=int(os.environ.get("GAMMA_NUM_ITERS_REFINE", "2000")),
     patch_size=int(os.environ.get("GAMMA_PATCH_SIZE", "1")),
-    embed_dim=int(os.environ.get("GAMMA_EMBED_DIM", "32")),
-    num_heads=int(os.environ.get("GAMMA_NUM_HEADS", "4")),
+    embed_dim=int(os.environ.get("GAMMA_EMBED_DIM", "8")),
+    num_heads=int(os.environ.get("GAMMA_NUM_HEADS", "2")),
     num_layers=int(os.environ.get("GAMMA_NUM_LAYERS", "4")),
     mlp_hidden_dim=(
         int(os.environ["GAMMA_MLP_HIDDEN_DIM"])
@@ -62,6 +62,6 @@ run_srt_experiment(
     experimental_on_the_fly=os.environ.get("GAMMA_EXPERIMENTAL_ON_THE_FLY", "true").lower() in {"1", "true", "yes", "on"},
     sampler_name=os.environ.get("GAMMA_SAMPLER", "local"),
     sampler_name_refine=os.environ.get("GAMMA_SAMPLER_REFINE", "pt_local"),
-    model_type=os.environ.get("GAMMA_MODEL_TYPE", "site_type_relation"),
+    model_type=os.environ.get("GAMMA_MODEL_TYPE", "site_type_relation_gated_pool_bond"),
     run_tag=os.environ.get("GAMMA_RUN_TAG"),
 )

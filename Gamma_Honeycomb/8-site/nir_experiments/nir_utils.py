@@ -1,54 +1,54 @@
 from __future__ import annotations
 
-import numpy as np
+import functools
+
+import jax
+import jax.numpy as jnp
+from jax.scipy.special import logsumexp
 
 
-def logsumexp(values: np.ndarray) -> float:
-    values = np.asarray(values, dtype=np.float64)
-    vmax = np.max(values)
-    return float(vmax + np.log(np.sum(np.exp(values - vmax))))
+def _as_float64(values):
+    return jnp.asarray(values, dtype=jnp.float64)
 
 
 def normalised_importance_weights_from_log_probs(
-    log_target_probs: np.ndarray,
-    log_proposal_probs: np.ndarray,
-) -> np.ndarray:
-    log_target_probs = np.asarray(log_target_probs, dtype=np.float64)
-    log_proposal_probs = np.asarray(log_proposal_probs, dtype=np.float64)
+    log_target_probs,
+    log_proposal_probs,
+):
+    log_target_probs = _as_float64(log_target_probs)
+    log_proposal_probs = _as_float64(log_proposal_probs)
     if log_target_probs.shape != log_proposal_probs.shape:
         raise ValueError("Target and proposal log-probabilities must have matching shapes.")
 
     log_weights = log_target_probs - log_proposal_probs
     log_norm = logsumexp(log_weights)
-    return np.exp(log_weights - log_norm)
+    return jnp.exp(log_weights - log_norm)
 
 
-def effective_sample_size(weights: np.ndarray) -> float:
-    weights = np.asarray(weights, dtype=np.float64)
+def effective_sample_size(weights):
+    weights = _as_float64(weights)
     if weights.ndim != 1:
         raise ValueError("weights must be a 1D array.")
-    return float(1.0 / np.sum(np.square(weights)))
+    return 1.0 / jnp.sum(jnp.square(weights))
 
 
-def sampling_efficiency(weights: np.ndarray) -> float:
-    weights = np.asarray(weights, dtype=np.float64)
-    return float(effective_sample_size(weights) / len(weights))
+def sampling_efficiency(weights):
+    weights = _as_float64(weights)
+    return effective_sample_size(weights) / weights.shape[0]
 
 
+@functools.partial(jax.jit, static_argnames=("n_samples",))
 def importance_resample(
-    configs: np.ndarray,
-    log_target_probs: np.ndarray,
-    log_proposal_probs: np.ndarray,
+    configs,
+    log_target_probs,
+    log_proposal_probs,
     *,
     n_samples: int,
-    rng: np.random.Generator | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if rng is None:
-        rng = np.random.default_rng()
-
-    configs = np.asarray(configs)
-    weights = normalised_importance_weights_from_log_probs(
-        log_target_probs, log_proposal_probs
-    )
-    indices = rng.choice(len(configs), size=n_samples, replace=True, p=weights)
-    return configs[indices], indices, weights
+    rng,
+):
+    configs = jnp.asarray(configs)
+    weights = normalised_importance_weights_from_log_probs(log_target_probs, log_proposal_probs)
+    safe_log_weights = jnp.log(jnp.clip(weights, jnp.finfo(weights.dtype).tiny, 1.0))
+    rng, subkey = jax.random.split(rng)
+    indices = jax.random.categorical(subkey, safe_log_weights, shape=(n_samples,))
+    return configs[indices], indices, weights, rng

@@ -13,8 +13,11 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("NETKET_DEBUG", "1")
 
 ROOT = Path(__file__).resolve().parents[1]
+GAMMA_MODEL_ROOT = ROOT / "18-site"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(GAMMA_MODEL_ROOT) not in sys.path:
+    sys.path.insert(0, str(GAMMA_MODEL_ROOT))
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +34,7 @@ from netket.vqs.mc.common import force_to_grad
 from netket.operator import DiscreteJaxOperator
 from scipy.sparse.linalg import eigsh
 
-from common import make_heisenberg_hamiltonian
+from hamiltonian import gamma_hamiltonian
 from nir_utils import (
     effective_sample_size,
     importance_resample,
@@ -45,15 +48,14 @@ from proposal_network import (
     sample_from_proposal,
     train_proposal_step,
 )
-from vit_model import PatchViT
+from vit_model import HoneycombPatchViT
 from vit_site_type_relation_gated_pool_model import (
-    HoneycombSiteTypeRelationGatedPoolViT,
-    build_honeycomb_bond_oriented_relation_matrix,
+    KitaevSiteTypeRelationGatedPoolViT,
 )
 from vit_site_type_relation_model import (
-    HoneycombSiteTypeRelationViT,
+    KitaevSiteTypeRelationHoneycombViT,
     build_bipartite_site_type_ids,
-    build_honeycomb_relation_matrix,
+    build_extended_kitaev_relation_matrix,
     site_relation_to_patch_relation_expanded,
     site_type_ids_to_patch_type_ids,
 )
@@ -67,11 +69,23 @@ def _count_params(tree) -> int:
     return int(sum(np.asarray(leaf).size for leaf in leaves))
 
 
+def _gamma_extent(num_sites: int) -> str:
+    return {
+        4: "[2,1]",
+        8: "[2,2]",
+        12: "[2,3]",
+        18: "[3,3]",
+        24: "[3,4]",
+        32: "[4,4]",
+        50: "[5,5]",
+        72: "[6,6]",
+        128: "[8,8]",
+    }.get(num_sites, "custom")
+
+
 def run_nir_experiment(
     *,
     num_sites: int,
-    j1: float,
-    j2: float,
     num_samples_stage_1: int = 3*2**8,
     num_samples_stage_2: int = 3*2**9,
     num_samples_stage_3: int = 3*2**10,
@@ -148,7 +162,7 @@ def run_nir_experiment(
     resume_checkpoint_path: str | None = None,
     resume_proposal_checkpoint_path: str | None = None,
     rng_seed: int | None = None,
-    model_type: str = "site_type_relation",
+    model_type: str = "site_type_relation_gated_pool_bond",
     run_tag: str | None = None,
 ):
     today = date.today().isoformat()
@@ -278,17 +292,18 @@ def run_nir_experiment(
     )
 
     job_base = (
-        f"J1={j1}_J2={j2}_{num_sites}-site_"
+        f"{num_sites}-site_"
         f"{num_layers}L_{num_heads}H_{patch_size}p_"
         f"{num_samples_stage_1}to{num_samples_stage_4 if use_stage_4 else num_samples_stage_3}_samples_{today}_"
-        f"J1_J2_Honeycomb_ViT_NIR_site_type_relation"
+        f"Gamma_Honeycomb_ViT_NIR_{model_type}"
     )
     if run_tag:
         job_base = f"{job_base}_{run_tag}"
     run_dir = Path("runs") / today / job_base
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    graph, extent, hi, ha = make_heisenberg_hamiltonian(num_sites, j1=j1, j2=j2)
+    graph, _symm_group, hi, ha = gamma_hamiltonian(num_sites)
+    extent = _gamma_extent(num_sites)
     exact_hilbert_size = int(hi.n_states)
     proposal_n_up = num_sites // 2 if nir_proposal_constrain_total_sz else None
     if (
@@ -297,7 +312,7 @@ def run_nir_experiment(
     ):
         raise ValueError(
             "Exact NIR refinement was requested, but the constrained Hilbert space has "
-            f"{exact_hilbert_size} states, above J1J2_NIR_EXACT_REFINE_MAX_STATES="
+            f"{exact_hilbert_size} states, above GAMMA_NIR_EXACT_REFINE_MAX_STATES="
             f"{nir_exact_refine_max_states}. Increase the limit only if the exact "
             "SR/Jacobian memory cost is acceptable."
         )
@@ -308,15 +323,13 @@ def run_nir_experiment(
         if patch_size == 1
         else site_type_ids_to_patch_type_ids(site_type_ids, patch_size)
     )
-    site_relation_matrix = build_honeycomb_relation_matrix(graph, permutation=perm)
+    site_relation_matrix = build_extended_kitaev_relation_matrix(graph, permutation=perm)
     relation_matrix = (
         site_relation_matrix
         if patch_size == 1
         else site_relation_to_patch_relation_expanded(site_relation_matrix, patch_size)
     )
-    bond_oriented_site_relation_matrix = build_honeycomb_bond_oriented_relation_matrix(
-        graph, permutation=perm
-    )
+    bond_oriented_site_relation_matrix = site_relation_matrix
     bond_oriented_relation_matrix = (
         bond_oriented_site_relation_matrix
         if patch_size == 1
@@ -446,16 +459,16 @@ def run_nir_experiment(
 
     def build_model(learn_phase):
         if model_type == "plain":
-            return PatchViT(
+            return HoneycombPatchViT(
                 embed_dim=embed_dim,
                 num_heads=num_heads,
                 num_layers=num_layers,
-                mlp_hidden=mlp_hidden,
+                mlp_hidden_dim=mlp_hidden,
                 patch_size=patch_size,
                 learn_phase=learn_phase,
             )
         if model_type == "site_type_relation_gated_pool_bond":
-            return HoneycombSiteTypeRelationGatedPoolViT(
+            return KitaevSiteTypeRelationGatedPoolViT(
                 embed_dim=embed_dim,
                 num_heads=num_heads,
                 num_layers=num_layers,
@@ -468,7 +481,7 @@ def run_nir_experiment(
             )
         if model_type != "site_type_relation":
             raise ValueError(f"Unsupported model_type={model_type!r}")
-        return HoneycombSiteTypeRelationViT(
+        return KitaevSiteTypeRelationHoneycombViT(
             embed_dim=embed_dim,
             num_heads=num_heads,
             num_layers=num_layers,
@@ -1182,7 +1195,7 @@ def run_nir_experiment(
     plt.plot(energy)
     plt.xlabel("Iteration")
     plt.ylabel("Energy")
-    plt.title(f"J1-J2 Honeycomb {num_sites}-site (ViT NIR)")
+    plt.title(f"Gamma Honeycomb {num_sites}-site (ViT NIR)")
     plt.tight_layout()
     plot_file = run_dir / f"energy_{job_base}.png"
     plt.savefig(plot_file)
@@ -1197,8 +1210,7 @@ def run_nir_experiment(
         "run_dir": str(run_dir),
         "num_sites": num_sites,
         "extent": extent,
-        "j1": j1,
-        "j2": j2,
+        "hamiltonian": "Gamma",
         "num_samples_stage_1": num_samples_stage_1,
         "num_samples_stage_2": num_samples_stage_2,
         "num_samples_stage_3": num_samples_stage_3,
@@ -1217,7 +1229,7 @@ def run_nir_experiment(
         "num_layers": num_layers,
         "mlp_hidden": mlp_hidden,
         "nir_strategy": "paper_inspired",
-        "target_optimizer": "adam",
+        "target_optimizer": target_optimizer_name,
         "target_sampler_name": target_sampler_name,
         "target_optimizer_name": target_optimizer_name,
         "target_sgd_momentum": target_sgd_momentum,

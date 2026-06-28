@@ -116,7 +116,7 @@ def run_srt_experiment(
     experimental_on_the_fly: bool = True,
     sampler_name: str = "local",
     sampler_name_refine: str | None = "pt_local",
-    model_type: str = "site_type_relation",
+    model_type: str = "site_type_relation_gated_pool_bond",
     run_tag: str | None = None,
 ):
     site_dir = Path(site_dir).resolve()
