@@ -22,13 +22,13 @@ run_srt_experiment(
     patch_size=int(os.environ.get("GAMMA_PATCH_SIZE", "1")),
     embed_dim=int(os.environ.get("GAMMA_EMBED_DIM", "16")),
     num_heads=int(os.environ.get("GAMMA_NUM_HEADS", "2")),
-    num_layers=int(os.environ.get("GAMMA_NUM_LAYERS", "2")),
+    num_layers=int(os.environ.get("GAMMA_NUM_LAYERS", "4")),
     mlp_hidden_dim=(
         int(os.environ["GAMMA_MLP_HIDDEN_DIM"])
         if "GAMMA_MLP_HIDDEN_DIM" in os.environ
         else None
     ),
-    learn_phase_warmup=os.environ.get("GAMMA_LEARN_PHASE_WARMUP", "true").lower() in {"1", "true", "yes", "on"},
+    learn_phase_warmup=os.environ.get("GAMMA_LEARN_PHASE_WARMUP", "false").lower() in {"1", "true", "yes", "on"},
     learn_phase_main=os.environ.get("GAMMA_LEARN_PHASE_MAIN", "true").lower() in {"1", "true", "yes", "on"},
     warm_sr_lr=float(os.environ.get("GAMMA_WARM_SR_LR", "1e-3")),
     warm_sr_momentum=float(os.environ.get("GAMMA_WARM_SR_MOMENTUM", "0.7")),
@@ -60,7 +60,7 @@ run_srt_experiment(
     use_experimental_vmc_sr=os.environ.get("GAMMA_USE_EXPERIMENTAL_VMC_SR", "false").lower() in {"1", "true", "yes", "on"},
     experimental_use_ntk=os.environ.get("GAMMA_EXPERIMENTAL_USE_NTK", "true").lower() in {"1", "true", "yes", "on"},
     experimental_on_the_fly=os.environ.get("GAMMA_EXPERIMENTAL_ON_THE_FLY", "true").lower() in {"1", "true", "yes", "on"},
-    sampler_name=os.environ.get("GAMMA_SAMPLER", "pt_local"),
+    sampler_name=os.environ.get("GAMMA_SAMPLER", "local"),
     sampler_name_refine=os.environ.get("GAMMA_SAMPLER_REFINE", "pt_local"),
     model_type=os.environ.get("GAMMA_MODEL_TYPE", "site_type_relation_gated_pool_bond"),
     run_tag=os.environ.get("GAMMA_RUN_TAG"),

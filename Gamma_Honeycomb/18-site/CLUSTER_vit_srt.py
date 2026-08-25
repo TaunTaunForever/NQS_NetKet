@@ -60,6 +60,6 @@ run_srt_experiment(
     use_experimental_vmc_sr=os.environ.get("GAMMA_USE_EXPERIMENTAL_VMC_SR", "false").lower() in {"1", "true", "yes", "on"},
     experimental_use_ntk=os.environ.get("GAMMA_EXPERIMENTAL_USE_NTK", "true").lower() in {"1", "true", "yes", "on"},
     experimental_on_the_fly=os.environ.get("GAMMA_EXPERIMENTAL_ON_THE_FLY", "true").lower() in {"1", "true", "yes", "on"},
-    model_type=os.environ.get("GAMMA_MODEL_TYPE", "site_type_relation_gated_pool_bond"),
+    model_type=os.environ.get("GAMMA_MODEL_TYPE", "site_type_relation"),
     run_tag=os.environ.get("GAMMA_RUN_TAG"),
 )

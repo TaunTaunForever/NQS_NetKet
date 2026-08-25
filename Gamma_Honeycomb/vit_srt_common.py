@@ -54,19 +54,31 @@ def _load_site_modules(site_dir: Path):
     try:
         hamiltonian = importlib.import_module("hamiltonian")
         try:
+            vit_model = importlib.import_module("vit_model")
+        except ModuleNotFoundError:
+            sys.path.insert(0, fallback_model_path)
+            try:
+                vit_model = importlib.import_module("vit_model")
+            finally:
+                if sys.path and sys.path[0] == fallback_model_path:
+                    sys.path.pop(0)
+        try:
             vit_site_type_relation_model = importlib.import_module(
                 "vit_site_type_relation_model"
             )
         except ModuleNotFoundError:
             sys.path.insert(0, fallback_model_path)
+            site_vit_model = sys.modules.pop("vit_model", None)
             try:
                 vit_site_type_relation_model = importlib.import_module(
                     "vit_site_type_relation_model"
                 )
             finally:
+                if site_vit_model is not None:
+                    sys.modules["vit_model"] = site_vit_model
                 if sys.path and sys.path[0] == fallback_model_path:
                     sys.path.pop(0)
-        return hamiltonian, vit_site_type_relation_model
+        return hamiltonian, vit_model, vit_site_type_relation_model
     finally:
         if sys.path and sys.path[0] == module_path:
             sys.path.pop(0)
@@ -116,7 +128,7 @@ def run_srt_experiment(
     experimental_on_the_fly: bool = True,
     sampler_name: str = "local",
     sampler_name_refine: str | None = "pt_local",
-    model_type: str = "site_type_relation_gated_pool_bond",
+    model_type: str = "site_type_relation",
     run_tag: str | None = None,
 ):
     site_dir = Path(site_dir).resolve()
@@ -135,8 +147,9 @@ def run_srt_experiment(
 
     os.environ["NETKET_DEBUG"] = "1" if netket_debug else "0"
 
-    hamiltonian_module, model_module = _load_site_modules(site_dir)
+    hamiltonian_module, vit_model_module, model_module = _load_site_modules(site_dir)
     gamma_hamiltonian = hamiltonian_module.gamma_hamiltonian
+    HoneycombPatchViT = vit_model_module.HoneycombPatchViT
     KitaevSiteTypeRelationHoneycombViT = model_module.KitaevSiteTypeRelationHoneycombViT
     build_bipartite_site_type_ids = model_module.build_bipartite_site_type_ids
     build_extended_kitaev_relation_matrix = model_module.build_extended_kitaev_relation_matrix
@@ -159,7 +172,7 @@ def run_srt_experiment(
                 if sys.path and sys.path[0] == fallback_model_path:
                     sys.path.pop(0)
         KitaevSiteTypeRelationGatedPoolViT = gated_model_module.KitaevSiteTypeRelationGatedPoolViT
-    elif model_type != "site_type_relation":
+    elif model_type not in {"plain", "site_type_relation"}:
         raise ValueError(f"Unsupported model_type={model_type!r}")
 
     today = date.today().isoformat()
@@ -234,6 +247,16 @@ def run_srt_experiment(
         raise ValueError(f"Unsupported sampler_name={name!r}")
 
     def build_model(*, learn_phase: bool):
+        if model_type == "plain":
+            return HoneycombPatchViT(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                num_layers=num_layers,
+                mlp_hidden_dim=mlp_hidden_dim,
+                patch_size=patch_size,
+                learn_phase=learn_phase,
+                permutation=perm,
+            )
         if model_type == "site_type_relation_gated_pool_bond":
             return KitaevSiteTypeRelationGatedPoolViT(
                 embed_dim=embed_dim,

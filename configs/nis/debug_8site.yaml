@@ -1,0 +1,7 @@
+defaults: default.yaml
+Lx: 2
+Ly: 2
+n_proposals: 4096
+num_samples: 1024
+use_exact_probs_for_small_N: true
+debug_mode: true

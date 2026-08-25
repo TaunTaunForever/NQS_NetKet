@@ -21,6 +21,7 @@ from scipy.sparse.linalg import eigsh
 
 import expectations
 from common import make_heisenberg_hamiltonian
+from vit_model import PatchViT
 from vit_site_type_relation_gated_pool_model import (
     HoneycombSiteTypeRelationGatedPoolViT,
     build_honeycomb_bond_oriented_relation_matrix,
@@ -69,12 +70,6 @@ def _compatible_chunk_size(requested: int | None, n_samples: int) -> int | None:
     return math.gcd(requested, n_samples) or None
 
 
-def _next_power_of_two(value: int) -> int:
-    if value <= 1:
-        return 1
-    return 1 << (value - 1).bit_length()
-
-
 def run_srt_experiment(
     *,
     num_sites: int,
@@ -102,10 +97,6 @@ def run_srt_experiment(
     sampler_name_refine: str | None = None,
     d_max: int = 2,
     d_max_refine: int | None = None,
-    observable_num_samples: int | None = None,
-    observable_chunk_size: int | None = None,
-    observable_sampler_name: str | None = None,
-    observable_d_max: int | None = None,
     optimizer_name: str = "sgd",
     num_samples_refine: int | None = None,
     num_iters_refine: int = 0,
@@ -122,18 +113,10 @@ def run_srt_experiment(
     sampler_name_refine = sampler_name if sampler_name_refine is None else sampler_name_refine
     d_max_refine = d_max if d_max_refine is None else d_max_refine
     num_samples_refine = num_samples if num_samples_refine is None else num_samples_refine
-    observable_sampler_name = (
-        sampler_name_refine if observable_sampler_name is None else observable_sampler_name
-    )
-    observable_d_max = d_max_refine if observable_d_max is None else observable_d_max
-    if observable_num_samples is None:
-        observable_num_samples = 3 * 2**12
-    if observable_chunk_size is None:
-        observable_chunk_size = min(observable_num_samples, 2048)
     chunk_size_main = _compatible_chunk_size(chunk_size, num_samples)
     chunk_size_refine = _compatible_chunk_size(chunk_size, num_samples_refine)
-    chunk_size_observable = _compatible_chunk_size(observable_chunk_size, observable_num_samples)
     model_tag = {
+        "plain": "plain",
         "site_type_relation": "site_type_relation",
         "site_type_relation_gated_pool_bond": "site_type_relation_gated_pool_bond",
     }.get(model_type)
@@ -236,6 +219,15 @@ def run_srt_experiment(
         raise ValueError(f"Unsupported optimizer_name={optimizer_name!r}")
 
     def build_model(*, learn_phase: bool):
+        if model_type == "plain":
+            return PatchViT(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                num_layers=num_layers,
+                mlp_hidden=mlp_hidden,
+                patch_size=patch_size,
+                learn_phase=learn_phase,
+            )
         if model_type == "site_type_relation_gated_pool_bond":
             return HoneycombSiteTypeRelationGatedPoolViT(
                 embed_dim=embed_dim,
@@ -404,26 +396,8 @@ def run_srt_experiment(
     plt.savefig(f"energy_log_{job_name}.png")
     plt.close()
 
-    print("\n=== Observable evaluation pass ===\n")
-    print("observable_sampler:", observable_sampler_name)
-    print("observable_num_samples:", observable_num_samples)
-    print("observable_chunk_size:", chunk_size_observable)
-
-    observable_sampler = build_sampler(
-        observable_sampler_name,
-        observable_num_samples,
-        observable_d_max,
-    )
-    observable_vstate = nk.vqs.MCState(
-        sampler=observable_sampler,
-        model=model_full,
-        n_samples=observable_num_samples,
-        variables=final_vstate.variables,
-        chunk_size=chunk_size_observable,
-    )
-
     observables = expectations.define_observables(num_sites, hi, graph)
-    observable_results = expectations.calculate_expectations(observable_vstate, ha, observables)
+    observable_results = expectations.calculate_expectations(final_vstate, ha, observables)
     observables_file = f"observables_{job_name}.json"
     with open(observables_file, "w") as f:
         json.dump(_json_safe(observable_results), f, indent=2)
@@ -438,9 +412,6 @@ def run_srt_experiment(
         "chunk_size": chunk_size,
         "chunk_size_main": chunk_size_main,
         "chunk_size_refine": chunk_size_refine,
-        "observable_num_samples": observable_num_samples,
-        "observable_chunk_size": observable_chunk_size,
-        "chunk_size_observable": chunk_size_observable,
         "j1": j1,
         "j2": j2,
         "patch_size": patch_size,
@@ -468,10 +439,8 @@ def run_srt_experiment(
         "diag_shift_refine": diag_shift_refine,
         "sampler_name": sampler_name,
         "sampler_name_refine": sampler_name_refine,
-        "observable_sampler_name": observable_sampler_name,
         "d_max": d_max,
         "d_max_refine": d_max_refine,
-        "observable_d_max": observable_d_max,
         "optimizer_name": optimizer_name,
         "num_samples_refine": num_samples_refine,
         "num_iters_refine": num_iters_refine,

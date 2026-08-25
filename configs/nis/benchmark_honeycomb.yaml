@@ -1,0 +1,6 @@
+defaults: default.yaml
+Lx: 3
+Ly: 3
+n_proposals: 8192
+num_samples: 2048
+use_exact_probs_for_small_N: false

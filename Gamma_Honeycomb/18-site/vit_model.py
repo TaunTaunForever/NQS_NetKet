@@ -63,7 +63,8 @@ class TransformerBlock(nn.Module):
 
 
 def log_cosh(z):
-    return jnp.log(jnp.cosh(z))
+    z_abs = jnp.where(jnp.real(z) >= 0, z, -z)
+    return z_abs + jnp.log1p(jnp.exp(-2 * z_abs)) - jnp.log(2.0)
 
 
 class OutputHead(nn.Module):
@@ -299,12 +300,37 @@ class BondAwareSelfAttention(nn.Module):
     embed_dim: int
     num_heads: int
     relation_matrix: Tuple[Tuple[int, ...], ...]
-    num_relation_types: int = 5
+    # ``None`` means infer the required cardinality from ``relation_matrix``.
+    # This is the safe default because the extended site-relation builder uses
+    # relation IDs beyond the original five bond/non-neighbor classes.
+    num_relation_types: int | None = None
     data_type: jnp.dtype = jnp.float64
 
     @nn.compact
     def __call__(self, x):
         B, T, D = x.shape
+
+        relation_ids = tuple(
+            int(relation_id)
+            for row in self.relation_matrix
+            for relation_id in row
+        )
+        if not relation_ids:
+            raise ValueError("relation_matrix must contain at least one relation id")
+        if min(relation_ids) < 0:
+            raise ValueError("relation_matrix relation ids must be non-negative")
+        required_relation_types = max(relation_ids) + 1
+        if self.num_relation_types is None:
+            num_relation_types = required_relation_types
+        else:
+            num_relation_types = int(self.num_relation_types)
+            if num_relation_types < required_relation_types:
+                raise ValueError(
+                    "relation_matrix requires "
+                    f"{required_relation_types} relation types (ids 0 through "
+                    f"{required_relation_types - 1}), but num_relation_types="
+                    f"{num_relation_types}."
+                )
 
         if D != self.embed_dim:
             raise ValueError(f"Expected embed_dim={self.embed_dim}, got {D}")
@@ -342,7 +368,7 @@ class BondAwareSelfAttention(nn.Module):
         bond_bias_table = self.param(
             "bond_attention_bias",
             nn.initializers.zeros,
-            (self.num_heads, self.num_relation_types),
+            (self.num_heads, num_relation_types),
             self.data_type,
         )
 
@@ -371,6 +397,7 @@ class BondAwareTransformerBlock(nn.Module):
     mlp_hidden_dim: int
     relation_matrix: Tuple[Tuple[int, ...], ...]
     data_type: jnp.dtype
+    num_relation_types: int | None = None
     residual_scale: float = 0.8
 
     @nn.compact
@@ -384,6 +411,7 @@ class BondAwareTransformerBlock(nn.Module):
             embed_dim=self.embed_dim,
             num_heads=self.num_heads,
             relation_matrix=self.relation_matrix,
+            num_relation_types=self.num_relation_types,
             data_type=self.data_type,
             name="BondAwareSelfAttention",
         )(y)
@@ -500,4 +528,3 @@ class KitaevBondAwareHoneycombViT(nn.Module):
         if self.learn_phase:
             return log_psi
         return jnp.real(log_psi)
-

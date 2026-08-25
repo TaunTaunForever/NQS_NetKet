@@ -201,7 +201,8 @@ class MLP(nn.Module):
 
 
 def log_cosh(z):
-    return jnp.log(jnp.cosh(z))
+    z_abs = jnp.where(jnp.real(z) >= 0, z, -z)
+    return z_abs + jnp.log1p(jnp.exp(-2 * z_abs)) - jnp.log(2.0)
 
 
 class OutputHead(nn.Module):

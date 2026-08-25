@@ -133,7 +133,15 @@ class RelationAwareSelfAttention(nn.Module):
         logits = logits + relation_bias_table[:, relation][None, :, :, :]
 
         attn = nn.softmax(logits, axis=-1)
+        relation_value_table = self.param(
+            "relation_value",
+            normal(stddev=0.02),
+            (self.num_heads, self.num_relation_types, head_dim),
+            self.data_type,
+        )
+        relation_values = relation_value_table[:, relation, :]
         y = jnp.einsum("bhij,bhjd->bhid", attn, v)
+        y = y + jnp.einsum("bhij,hijd->bhid", attn, relation_values)
         y = y.transpose(0, 2, 1, 3).reshape(batch_size, n_tokens, embed_dim)
 
         return nn.Dense(

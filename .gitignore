@@ -45,3 +45,7 @@ Heisenberg_Honeycomb/out_*
 Heisenberg_Honeycomb/mean_energy_run_*.txt
 J1_J2_Heisenberg_Triangular/out_*
 **/benchmark_runs/
+
+# Weighted-NIS metrics, sampled configurations, and checkpoints are generated
+# experiment artifacts. Keep launchers and source code under version control.
+**/nis_experiments/results/
