@@ -1,0 +1,119 @@
+#!/bin/bash
+#SBATCH --account=rrg-sorensen
+#SBATCH --nodes=1
+#SBATCH --export=ALL,DISABLE_DCGM=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=4000
+#SBATCH --gpus=1
+#SBATCH --time=08:00:00
+#SBATCH --array=0-8
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+NIR_SCRIPT="${SCRIPT_DIR}/nir_experiments/vit_nir.py"
+
+J2_VALUES=(
+  0.05
+  0.10
+  0.15
+  0.20
+  0.25
+  0.30
+  0.35
+  0.40
+  0.50
+)
+
+TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
+if (( TASK_ID < 0 || TASK_ID >= ${#J2_VALUES[@]} )); then
+  echo "Invalid SLURM_ARRAY_TASK_ID=${TASK_ID}; expected 0..$((${#J2_VALUES[@]} - 1))" >&2
+  exit 1
+fi
+
+if [[ -n "${J1J2_VENV_ACTIVATE:-}" ]]; then
+  # shellcheck disable=SC1090
+  source "${J1J2_VENV_ACTIVATE}"
+elif [[ -n "${J1J2_VENV_DIR:-}" && -f "${J1J2_VENV_DIR}/bin/activate" ]]; then
+  # shellcheck disable=SC1090
+  source "${J1J2_VENV_DIR}/bin/activate"
+elif [[ -f "${REPO_ROOT}/NetKet_Updated_venv/bin/activate" ]]; then
+  # shellcheck disable=SC1090
+  source "${REPO_ROOT}/NetKet_Updated_venv/bin/activate"
+fi
+
+if [[ -n "${J1J2_PYTHON_BIN:-}" ]]; then
+  PYTHON_BIN="${J1J2_PYTHON_BIN}"
+elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+  PYTHON_BIN="${VIRTUAL_ENV}/bin/python"
+elif [[ -x "${REPO_ROOT}/NetKet_Updated_venv/bin/python" ]]; then
+  PYTHON_BIN="${REPO_ROOT}/NetKet_Updated_venv/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
+
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1 && [[ "${PYTHON_BIN}" == "python3" ]]; then
+  echo "Could not find python3 on PATH and no virtualenv was configured." >&2
+  exit 1
+fi
+
+nvidia-smi || true
+
+export JAX_PLATFORM_NAME="${JAX_PLATFORM_NAME:-gpu}"
+export MPLBACKEND="${MPLBACKEND:-Agg}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/mpl}"
+mkdir -p "${MPLCONFIGDIR}"
+
+# Match the working 8-site NIR recipe, but use 1x sample counts for a single GPU.
+export J1J2_J1="${J1J2_J1:-1.0}"
+export J1J2_J2="${J2_VALUES[$TASK_ID]}"
+export J1J2_NIR_NUM_ITERS="${J1J2_NIR_NUM_ITERS:-5000}"
+export J1J2_NIR_EMBED_DIM="${J1J2_NIR_EMBED_DIM:-8}"
+export J1J2_NIR_PROPOSAL_EMBED_DIM="${J1J2_NIR_PROPOSAL_EMBED_DIM:-8}"
+export J1J2_NIR_NUM_HEADS="${J1J2_NIR_NUM_HEADS:-4}"
+export J1J2_NIR_NUM_LAYERS="${J1J2_NIR_NUM_LAYERS:-2}"
+export J1J2_NIR_SAMPLES_STAGE_1="${J1J2_NIR_SAMPLES_STAGE_1:-256}"
+export J1J2_NIR_SAMPLES_STAGE_2="${J1J2_NIR_SAMPLES_STAGE_2:-256}"
+export J1J2_NIR_SAMPLES_STAGE_3="${J1J2_NIR_SAMPLES_STAGE_3:-512}"
+export J1J2_NIR_PROPOSAL_BATCH="${J1J2_NIR_PROPOSAL_BATCH:-64}"
+export J1J2_NIR_LR_STAGE_1="${J1J2_NIR_LR_STAGE_1:-5e-3}"
+export J1J2_NIR_LR_STAGE_2="${J1J2_NIR_LR_STAGE_2:-2e-3}"
+export J1J2_NIR_LR_STAGE_3="${J1J2_NIR_LR_STAGE_3:-5e-4}"
+export J1J2_NIR_LR_STAGE_1_ITERS="${J1J2_NIR_LR_STAGE_1_ITERS:-200}"
+export J1J2_NIR_LR_STAGE_2_ITERS="${J1J2_NIR_LR_STAGE_2_ITERS:-350}"
+export J1J2_NIR_LEARN_PHASE_STAGE_1="${J1J2_NIR_LEARN_PHASE_STAGE_1:-true}"
+export J1J2_NIR_LEARN_PHASE_STAGE_2="${J1J2_NIR_LEARN_PHASE_STAGE_2:-true}"
+export J1J2_NIR_LEARN_PHASE_STAGE_3="${J1J2_NIR_LEARN_PHASE_STAGE_3:-true}"
+export J1J2_NIR_TARGET_SAMPLER="${J1J2_NIR_TARGET_SAMPLER:-local}"
+export J1J2_NIR_TARGET_OPTIMIZER="${J1J2_NIR_TARGET_OPTIMIZER:-sgd}"
+export J1J2_NIR_TARGET_MOMENTUM="${J1J2_NIR_TARGET_MOMENTUM:-0.5}"
+export J1J2_NIR_TARGET_PRECONDITIONER="${J1J2_NIR_TARGET_PRECONDITIONER:-minsr}"
+export J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_1="${J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_1:-2e-3}"
+export J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_2="${J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_2:-1e-3}"
+export J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_3="${J1J2_NIR_TARGET_SR_DIAG_SHIFT_STAGE_3:-1e-5}"
+export J1J2_NIR_TARGET_SR_MODE="${J1J2_NIR_TARGET_SR_MODE:-complex}"
+export J1J2_NIR_MAX_PROPOSAL_BATCHES="${J1J2_NIR_MAX_PROPOSAL_BATCHES:-6}"
+export J1J2_NIR_MAX_ADAPTIVE_ROUNDS="${J1J2_NIR_MAX_ADAPTIVE_ROUNDS:-6}"
+export J1J2_NIR_MIN_ADAPTIVE_ROUNDS="${J1J2_NIR_MIN_ADAPTIVE_ROUNDS:-4}"
+export J1J2_NIR_FORCE_ADAPT_UNTIL_ITER="${J1J2_NIR_FORCE_ADAPT_UNTIL_ITER:-250}"
+export J1J2_NIR_ESS_THRESHOLD_FRAC="${J1J2_NIR_ESS_THRESHOLD_FRAC:-0.4}"
+export J1J2_NIR_EFF_STAGE_1="${J1J2_NIR_EFF_STAGE_1:-0.20}"
+export J1J2_NIR_EFF_STAGE_2="${J1J2_NIR_EFF_STAGE_2:-0.20}"
+export J1J2_NIR_EFF_STAGE_3="${J1J2_NIR_EFF_STAGE_3:-0.20}"
+export J1J2_NIR_PROPOSAL_LR_STAGE_1="${J1J2_NIR_PROPOSAL_LR_STAGE_1:-2e-4}"
+export J1J2_NIR_PROPOSAL_LR_STAGE_2="${J1J2_NIR_PROPOSAL_LR_STAGE_2:-1e-4}"
+export J1J2_NIR_PROPOSAL_LR_STAGE_3="${J1J2_NIR_PROPOSAL_LR_STAGE_3:-5e-5}"
+export J1J2_NIR_PROPOSAL_STEPS_STAGE_1="${J1J2_NIR_PROPOSAL_STEPS_STAGE_1:-1}"
+export J1J2_NIR_PROPOSAL_STEPS_STAGE_2="${J1J2_NIR_PROPOSAL_STEPS_STAGE_2:-1}"
+export J1J2_NIR_PROPOSAL_STEPS_STAGE_3="${J1J2_NIR_PROPOSAL_STEPS_STAGE_3:-1}"
+export J1J2_NIR_PROPOSAL_HEADS="${J1J2_NIR_PROPOSAL_HEADS:-4}"
+export J1J2_NIR_PROPOSAL_LAYERS="${J1J2_NIR_PROPOSAL_LAYERS:-2}"
+export J1J2_NIR_PROB_FLOOR="${J1J2_NIR_PROB_FLOOR:-1e-4}"
+export J1J2_NIR_MODEL_TYPE="${J1J2_NIR_MODEL_TYPE:-site_type_relation}"
+
+cd "${SCRIPT_DIR}"
+echo "Running 8-site J1-J2 NIR sweep with J1=${J1J2_J1}, J2=${J1J2_J2}"
+mpirun -n 1 "${PYTHON_BIN}" -u "${NIR_SCRIPT}"

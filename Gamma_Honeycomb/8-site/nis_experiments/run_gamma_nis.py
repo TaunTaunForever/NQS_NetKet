@@ -484,6 +484,211 @@ def exact_variational_energy(hilbert, hamiltonian, target, variables) -> float:
     return float(jnp.real(jnp.sum(probabilities * local_energy(hamiltonian, target, variables, states))))
 
 
+def save_energy_plot(output_dir: Path, config: NISRunConfig) -> Path | None:
+    """Save standard linear and log-scale NIS energy plots.
+
+    The diagnostics logger appends when a directory is reused.  Iteration
+    numbers therefore identify the final contiguous run, rather than letting
+    values from an earlier restart leak into the plot.  Plotting is deliberately
+    best-effort: an unavailable plotting backend must not invalidate a finished
+    optimisation or its checkpoints.
+    """
+    metrics_path = output_dir / "metrics.jsonl"
+    if not metrics_path.is_file():
+        print("Energy plot skipped: metrics.jsonl was not created.")
+        return None
+
+    try:
+        entries: list[tuple[int, float, float | None]] = []
+        for line in metrics_path.read_text().splitlines():
+            try:
+                record = json.loads(line)
+                iteration = record.get("iteration")
+                energy = float(record["energy_mean"])
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+            if not isinstance(iteration, int) or not math.isfinite(energy):
+                continue
+            exact_energy = record.get("exact_ground_energy")
+            exact_energy = (
+                float(exact_energy)
+                if exact_energy is not None and math.isfinite(float(exact_energy))
+                else None
+            )
+            entries.append((iteration, energy, exact_energy))
+
+        if not entries:
+            print("Energy plot skipped: no finite energy records were found.")
+            return None
+
+        segments: list[list[tuple[int, float, float | None]]] = []
+        segment: list[tuple[int, float, float | None]] = []
+        previous_iteration = -1
+        for entry in entries:
+            if segment and entry[0] < previous_iteration:
+                segments.append(segment)
+                segment = []
+            segment.append(entry)
+            previous_iteration = entry[0]
+        segments.append(segment)
+
+        # Keep the final record if an iteration was logged more than once.
+        by_iteration = {
+            iteration: (energy, exact_energy)
+            for iteration, energy, exact_energy in segments[-1]
+        }
+        iterations = np.asarray(sorted(by_iteration), dtype=int)
+        energies = np.asarray([by_iteration[iteration][0] for iteration in iterations])
+        exact_energy = next(
+            (
+                by_iteration[iteration][1]
+                for iteration in reversed(iterations)
+                if by_iteration[iteration][1] is not None
+            ),
+            None,
+        )
+
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+
+        rolling_window = min(100, len(energies))
+        rolling = np.convolve(
+            energies,
+            np.full(rolling_window, 1.0 / rolling_window),
+            mode="valid",
+        )
+        rolling_iterations = iterations[rolling_window - 1 :]
+        title = (
+            f"{config.num_sites}-site {config.variant.replace('_', ' ')} weighted-NIS: "
+            f"iterations {iterations[0]}–{iterations[-1]}"
+        )
+
+        figure, axes = plt.subplots(
+            2,
+            1,
+            figsize=(13, 10),
+            constrained_layout=True,
+        )
+        figure.suptitle(title, fontsize=16)
+        for axis in axes:
+            axis.plot(
+                iterations,
+                energies,
+                color="#4c78a8",
+                alpha=0.16,
+                linewidth=0.55,
+                label="Instantaneous NIS energy",
+            )
+            axis.plot(
+                rolling_iterations,
+                rolling,
+                color="#0b3c6d",
+                linewidth=2.0,
+                label=f"{rolling_window}-iteration rolling mean",
+            )
+            if exact_energy is not None:
+                axis.axhline(
+                    exact_energy,
+                    color="#c62828",
+                    linestyle="--",
+                    linewidth=1.8,
+                    label=f"ED ground energy = {exact_energy:.8f}",
+                )
+            axis.grid(alpha=0.22)
+            axis.set_ylabel("Energy")
+
+        axes[0].set_title("Full optimization trajectory")
+        axes[0].set_xlim(iterations[0], iterations[-1])
+        axes[0].legend(frameon=False, loc="lower right")
+
+        late_start = max(iterations[0], int(0.05 * iterations[-1]))
+        late_mask = iterations >= late_start
+        late_energies = energies[late_mask]
+        if exact_energy is not None:
+            late_energies = np.append(late_energies, exact_energy)
+        late_range = max(float(np.ptp(late_energies)), 1.0e-3)
+        late_margin = max(0.02, 0.15 * late_range)
+        axes[1].set_title("Late-stage view")
+        axes[1].set_xlim(late_start, iterations[-1])
+        axes[1].set_ylim(
+            float(np.min(late_energies) - late_margin),
+            float(np.max(late_energies) + late_margin),
+        )
+        axes[1].set_xlabel("Iteration")
+        axes[1].legend(frameon=False, loc="lower right")
+
+        plot_path = output_dir / "energy_vs_iteration.png"
+        figure.savefig(plot_path, dpi=180)
+        plt.close(figure)
+
+        log_figure, log_axis = plt.subplots(
+            figsize=(13, 7),
+            constrained_layout=True,
+        )
+        log_figure.suptitle(f"{title} (log iteration axis)", fontsize=16)
+        log_axis.plot(
+            iterations,
+            energies,
+            color="#1f4e79",
+            alpha=0.70,
+            linewidth=0.65,
+            label="Instantaneous NIS energy",
+        )
+        if exact_energy is not None:
+            log_axis.axhline(
+                exact_energy,
+                color="#c62828",
+                linestyle="--",
+                linewidth=1.8,
+                label=f"ED ground energy = {exact_energy:.8f}",
+            )
+        log_axis.set_xscale("log")
+        log_axis.set_xlim(max(iterations[0], 1), iterations[-1])
+        log_axis.set(xlabel="Iteration (log scale)", ylabel="Energy")
+        log_axis.grid(alpha=0.22, which="both")
+        log_axis.legend(frameon=False, loc="lower right")
+
+        inset = log_axis.inset_axes([0.60, 0.55, 0.35, 0.36])
+        inset_start = max(iterations[0], iterations[-1] - 999)
+        inset_mask = iterations >= inset_start
+        inset_energies = energies[inset_mask]
+        inset.plot(
+            iterations[inset_mask],
+            inset_energies,
+            color="#1f4e79",
+            alpha=0.85,
+            linewidth=0.65,
+        )
+        if exact_energy is not None:
+            inset.axhline(
+                exact_energy,
+                color="#c62828",
+                linestyle="--",
+                linewidth=1.1,
+            )
+            inset_energies = np.append(inset_energies, exact_energy)
+        inset_range = max(float(np.ptp(inset_energies)), 1.0e-3)
+        inset_margin = max(0.01, 0.15 * inset_range)
+        inset.set_xlim(inset_start, iterations[-1])
+        inset.set_ylim(
+            float(np.min(inset_energies) - inset_margin),
+            float(np.max(inset_energies) + inset_margin),
+        )
+        inset.set_title("Final 1,000 iterations", fontsize=9)
+        inset.tick_params(labelsize=8)
+        inset.grid(alpha=0.20)
+        log_plot_path = output_dir / "energy_vs_log_iteration.png"
+        log_figure.savefig(log_plot_path, dpi=180)
+        plt.close(log_figure)
+        print(f"Saved energy plots: {plot_path}, {log_plot_path}")
+        return plot_path
+    except Exception as error:  # A completed NIS run must remain usable.
+        print(f"Energy plot skipped: {error}")
+        return None
+
+
 def run_netket_experiment(config: NISRunConfig):
     """Run the Gamma experiment through NetKet's VQS/driver interfaces.
 
@@ -828,6 +1033,8 @@ def run_netket_experiment(config: NISRunConfig):
             jnp.save(output_dir / "resampled_sigma.npy", resampled)
             jnp.save(output_dir / "resample_indices.npy", indices)
 
+    save_energy_plot(output_dir, config)
+
 
 def _run_explicit_jax_experiment(config: NISRunConfig):
     """Run the multi-step proposal/target optimisation experiment."""
@@ -1037,6 +1244,8 @@ def _run_explicit_jax_experiment(config: NISRunConfig):
             (output_dir / "proposal.msgpack").write_bytes(serialization.to_bytes({"params": proposal_parameters}))
             jnp.save(output_dir / "resampled_sigma.npy", resampled)
             jnp.save(output_dir / "resample_indices.npy", indices)
+
+    save_energy_plot(output_dir, config)
 
 
 def run_experiment(config: NISRunConfig):

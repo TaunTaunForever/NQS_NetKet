@@ -34,10 +34,10 @@ CONFIG = NISRunConfig(
     # Default: NetKet VariationalState + NetKet-compatible NIS driver.
     # Use "explicit_jax" only to opt into the legacy experimental pmap backend.
     execution_backend="netket",
-    embed_dim=16,
-    num_heads=2,
-    num_layers=4,
-    mlp_hidden_dim=32,
+    embed_dim=32,
+    num_heads=4,
+    num_layers=6,
+    mlp_hidden_dim=64,
     patch_size=1,
 
     # Run length and output.
@@ -49,15 +49,15 @@ CONFIG = NISRunConfig(
 
     # NIS sampling. Keep this divisible by the number of visible GPUs when
     # native sharding is enabled.
-    n_proposals=3 * 512,
-    num_samples=1024,
+    n_proposals=3*512 ,
+    num_samples=512,
     ess_threshold=0.05,
     always_update_target=True,
     resample_method="systematic",
     use_multi_gpu=True,
 
     # Autoregressive proposal training
-    proposal_embed_dim=16,
+    proposal_embed_dim=32,
     proposal_lr=1.0e-2,
     proposal_train_steps=1,
     proposal_train_batch_size=1024,
@@ -67,7 +67,7 @@ CONFIG = NISRunConfig(
     target_lr=3.0e-2,
     target_lr_final=1.0e-2,
     target_lr_decay_steps=10000,
-    sr_diag_shift=1.0e-4,
+    sr_diag_shift=1.0e-3,
     sr_chunk_size=2048,
     sr_trust_region=5.0e-1,
     sr_momentum=0.8,

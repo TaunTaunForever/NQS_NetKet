@@ -1,0 +1,50 @@
+{
+  "paper": "Ledinauskas and Anisimovas, arXiv:2507.20510",
+  "benchmark": "2d_transverse_field_ising",
+  "status": "paper_config_extracted_not_yet_runnable",
+  "lattices": [
+    [4, 4],
+    [6, 6],
+    [8, 8]
+  ],
+  "small_exact_jsd_lattice": [2, 3],
+  "field_range_for_energy_sweep": [0.0, 6.0],
+  "mcmc_comparison_example": {
+    "lattice": [8, 8],
+    "g": 0.1
+  },
+  "target_nqs": {
+    "type": "multi_state_mlp",
+    "num_lowest_states": 3,
+    "num_hidden_layers": 4,
+    "hidden_width_text": 256,
+    "hidden_width_appendix": 128,
+    "activation": "gelu",
+    "normalization": "layer_norm"
+  },
+  "proposal": {
+    "type": "autoregressive_transformer",
+    "embed_dim": 32,
+    "num_heads": 4,
+    "num_layers": 4,
+    "probability_floor": "paper_mentions_small_floor_no_value_found"
+  },
+  "optimizer": {
+    "target": "adam_plus_minsr",
+    "proposal": "adam",
+    "target_learning_rate": 0.001,
+    "proposal_learning_rate": 0.001
+  },
+  "sampling": {
+    "batch_size_target": 512,
+    "batch_size_proposal_training": 512,
+    "ess_threshold_alpha": 2.0,
+    "efficiency_threshold_alpha": 0.1,
+    "resampling": "importance_resampling",
+    "mcmc_warmup_steps": 640,
+    "mcmc_thinning_interval": 10
+  },
+  "training": {
+    "num_steps": 10000
+  }
+}

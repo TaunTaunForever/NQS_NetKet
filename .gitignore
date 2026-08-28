@@ -25,7 +25,9 @@ slurm-*.out
 
 *.png
 *.pdf
-*.sh
+*.svg
+*.jpg
+*.jpeg
 
 mean_energy_run_*.txt
 
@@ -49,3 +51,28 @@ J1_J2_Heisenberg_Triangular/out_*
 # Weighted-NIS metrics, sampled configurations, and checkpoints are generated
 # experiment artifacts. Keep launchers and source code under version control.
 **/nis_experiments/results/
+
+# Generated numerical data and experiment reports. These rules cover outputs
+# written both inside results directories and beside older experiment scripts.
+**/results/
+**/checkpoints/
+**/artifacts/
+**/traces/
+**/profiles/
+**/summary_*.json
+**/observables_*.json
+**/out_*.json
+*.jsonl
+*.csv
+*.tsv
+*.npy
+*.npz
+*.msgpack
+*.ckpt
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Interactive notebooks can embed execution outputs and experimental data.
+*.ipynb

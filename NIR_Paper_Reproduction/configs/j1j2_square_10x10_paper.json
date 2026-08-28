@@ -1,0 +1,81 @@
+{
+  "paper": "Ledinauskas and Anisimovas, arXiv:2507.20510",
+  "benchmark": "square_lattice_j1j2_heisenberg",
+  "status": "paper_config_extracted_not_yet_runnable",
+  "lattice": [10, 10],
+  "boundary_conditions": "periodic",
+  "j1": 1.0,
+  "j2": 0.5,
+  "target_nqs": {
+    "type": "residual_cnn",
+    "channels": 16,
+    "num_residual_blocks": 4,
+    "convolutions_per_block": 2,
+    "kernel_size": [3, 3],
+    "padding": "circular",
+    "activation": "gelu",
+    "normalization": "layer_norm",
+    "pooling": "global_average",
+    "output": "real_and_imag_log_psi"
+  },
+  "symmetries": {
+    "translation": "from_circular_conv_and_global_pool",
+    "spin_inversion": "flip_input_if_first_spin_down",
+    "rotation_reflection": "average_outputs_over_lattice_symmetry_transforms",
+    "magnetization": "subtract_30_from_real_logpsi_when_nonzero_magnetization"
+  },
+  "proposal_baselines": [
+    {
+      "embed_dim": 16,
+      "num_layers": 2,
+      "num_params": 7938,
+      "energy_per_site": null,
+      "mean_sampling_efficiency": 0.01,
+      "paper_status": "not_completed"
+    },
+    {
+      "embed_dim": 16,
+      "num_layers": 3,
+      "num_params": 11154,
+      "energy_per_site": null,
+      "mean_sampling_efficiency": 0.03,
+      "paper_status": "not_completed"
+    },
+    {
+      "embed_dim": 16,
+      "num_layers": 4,
+      "num_params": 14370,
+      "energy_per_site": -0.4969,
+      "mean_sampling_efficiency": 0.10,
+      "paper_status": "completed"
+    },
+    {
+      "embed_dim": 32,
+      "num_layers": 2,
+      "num_params": 30210,
+      "energy_per_site": -0.4966,
+      "mean_sampling_efficiency": 0.15,
+      "paper_status": "completed"
+    },
+    {
+      "embed_dim": 32,
+      "num_layers": 3,
+      "num_params": 42786,
+      "energy_per_site": -0.4968,
+      "mean_sampling_efficiency": 0.21,
+      "paper_status": "completed"
+    },
+    {
+      "embed_dim": 32,
+      "num_layers": 4,
+      "num_params": 55362,
+      "energy_per_site": -0.4969,
+      "mean_sampling_efficiency": 0.28,
+      "paper_status": "completed"
+    }
+  ],
+  "proposal_notes": {
+    "num_heads": "same_as_tfi_unless_ablation_requires_otherwise",
+    "magnetization_constraint": "paper_does_not_enforce_in_proposal"
+  }
+}
