@@ -1,11 +1,14 @@
 """NetKet driver for the target/proposal updates of weighted NIS."""
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 from netket.driver import AbstractVariationalDriver
 from netket.jax import tree_cast
 from netket.optimizer import identity_preconditioner
+from netket.utils import struct
 
 
 class WeightedNISVMC(AbstractVariationalDriver):
@@ -16,6 +19,35 @@ class WeightedNISVMC(AbstractVariationalDriver):
     estimate.  NetKet's logger/callback/optimizer APIs remain available through
     ``AbstractVariationalDriver``.
     """
+
+    # NetKet 3.22 makes optimisation drivers ``struct.Pytree`` instances.  All
+    # attributes assigned by this driver must therefore be declared up-front.
+    # Most are Python configuration or logging objects, so they are static
+    # Pytree fields.  The proposal optimiser state and loss may contain JAX
+    # arrays and remain dynamic fields.
+    _ham: Any = struct.field(pytree_node=False, serialize=False)
+    _preconditioner: Any = struct.field(pytree_node=False, serialize=False)
+    proposal_optimizer: Any = struct.field(pytree_node=False, serialize=False)
+    proposal_train_steps: int = struct.field(pytree_node=False, serialize=False)
+    proposal_train_batch_size: int | None = struct.field(
+        pytree_node=False, serialize=False
+    )
+    always_update_target: bool = struct.field(pytree_node=False, serialize=False)
+    ess_threshold: float = struct.field(pytree_node=False, serialize=False)
+    proposal_update_interval: int = struct.field(pytree_node=False, serialize=False)
+    proposal_freeze_after: int | None = struct.field(
+        pytree_node=False, serialize=False
+    )
+    heldout_diagnostics_every: int = struct.field(
+        pytree_node=False, serialize=False
+    )
+    _proposal_optimizer_state: Any = struct.field(pytree_node=True, serialize=False)
+    _proposal_loss: Any = struct.field(pytree_node=True, serialize=False)
+    _proposal_updated: bool = struct.field(pytree_node=False, serialize=False)
+    _target_updated: bool = struct.field(pytree_node=False, serialize=False)
+    _heldout_diagnostics: dict[str, float | None] = struct.field(
+        pytree_node=False, serialize=False
+    )
 
     def __init__(
         self,
@@ -103,8 +135,13 @@ class WeightedNISVMC(AbstractVariationalDriver):
             )
         )
 
-    def _forward_and_backward(self):
-        self.state.reset()
+    def compute_loss_and_update(self):
+        """Compute the weighted-NIS loss and target-model parameter update.
+
+        NetKet 3.22 calls this after ``reset_step`` and expects the explicit
+        ``(loss, update)`` pair.  The former ``_forward_and_backward`` hook
+        only returned an update and is therefore intentionally not retained.
+        """
         self._loss_stats, gradient = self.state.expect_and_grad(self._ham)
         ess_fraction = self.state.last_diagnostics["ESSFrac"]
         self._target_updated = self.always_update_target or bool(
@@ -154,10 +191,26 @@ class WeightedNISVMC(AbstractVariationalDriver):
                     self.state, heldout_force, heldout_batch
                 )
             self._heldout_diagnostics = heldout
-        return tree_cast(gradient, self.state.parameters)
+        return self._loss_stats, tree_cast(gradient, self.state.parameters)
 
-    def _log_additional_data(self, log_dict, step):
-        super()._log_additional_data(log_dict, step)
+    def advance(self, steps: int = 1):
+        """Advance manual weighted-NIS loops by one or more optimizer steps.
+
+        The experiment runners perform a paired post-update energy check and
+        possible rollback outside the NetKet driver.  NetKet 3.22 removed its
+        old ``advance`` helper, so this compact equivalent preserves that
+        workflow without relying on its deprecated driver hooks.
+        """
+        if steps < 0:
+            raise ValueError("steps must be non-negative")
+        for _ in range(steps):
+            self.reset_step()
+            self._loss_stats, self._dp = self.compute_loss_and_update()
+            self.update_parameters(self._dp)
+            self._step_count += 1
+
+    def _log_additional_data(self, log_dict):
+        super()._log_additional_data(log_dict)
         diagnostics = self.state.last_diagnostics
         if diagnostics:
             log_dict["NIS"] = {

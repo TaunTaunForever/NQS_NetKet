@@ -81,6 +81,10 @@ class NISRunConfig:
     num_layers: int = 2
     mlp_hidden_dim: int = 16
     patch_size: int = 1
+    # The proposal is deliberately independent of the target ansatz.  Keep
+    # this explicit here (rather than relying on the model default) so the
+    # size-specific launchers can tune it without touching sampler code.
+    proposal_num_layers: int = 4
     proposal_embed_dim: int = 16
 
     target_lr: float = 1.0e-3
@@ -112,12 +116,13 @@ class NISRunConfig:
     # It acts only on the weighted-centering null mode, so leave it disabled
     # unless numerical diagnostics motivate it.
     sr_proj_reg: float | None = None
-    # ``auto`` uses dense Cholesky only when the pool safely fits.
-    # ``matrix_free`` enforces the scalable multi-GPU path. ``cholesky``
-    # forces the single-device dense-Jacobian diagnostic, while
-    # ``distributed_cholesky`` constructs a dense weighted kernel from
-    # per-device Jacobian shards before factorising it on one device.
-    sr_direct_solver: str = "auto"
+    # Keep production NIS on the scalable matrix-free multi-GPU path.  The
+    # automatic dense-Cholesky heuristic can select a memory-heavy Jacobian
+    # path for *smaller* pools, because their realified sample space happens
+    # to fall below its threshold. ``cholesky`` and ``distributed_cholesky``
+    # remain explicit small-system diagnostics; ``auto`` is retained only for
+    # controlled solver experiments.
+    sr_direct_solver: str = "matrix_free"
     # Internal batch size for the distributed dense-kernel diagnostic. It
     # bounds reverse-mode Jacobian workspace rather than changing the NIS pool.
     sr_dense_jacobian_chunk_size: int = 64
@@ -707,7 +712,11 @@ def run_netket_experiment(config: NISRunConfig):
     key, target_key, proposal_key = jax.random.split(key, 3)
 
     target = build_target_model(config, graph, symmetry_group)
-    proposal = MinimalAutoregressiveTransformer(hilbert.size, config.proposal_embed_dim)
+    proposal = MinimalAutoregressiveTransformer(
+        hilbert.size,
+        config.proposal_embed_dim,
+        num_layers=config.proposal_num_layers,
+    )
     initial_sigma = jnp.ones((2, hilbert.size), dtype=jnp.float64)
     target_variables = target.init(target_key, initial_sigma)
     proposal_variables = proposal.init(proposal_key, initial_sigma)
@@ -840,7 +849,7 @@ def run_netket_experiment(config: NISRunConfig):
     elif config.use_multi_gpu and len(jax.local_devices()) > 1:
         print(
             "NetKet weighted-NIS backend: sharding was requested but is disabled. "
-            "Set NETKET_EXPERIMENTAL_SHARDING=1 before importing JAX/NetKet."
+            "Ensure that one process can see all requested GPUs."
         )
     else:
         print("NetKet weighted-NIS backend: single-device execution")
@@ -1043,7 +1052,11 @@ def _run_explicit_jax_experiment(config: NISRunConfig):
     key, target_key, proposal_key = jax.random.split(key, 3)
 
     target = build_target_model(config, graph, symmetry_group)
-    proposal = MinimalAutoregressiveTransformer(hilbert.size, config.proposal_embed_dim)
+    proposal = MinimalAutoregressiveTransformer(
+        hilbert.size,
+        config.proposal_embed_dim,
+        num_layers=config.proposal_num_layers,
+    )
     initial_sigma = jnp.ones((2, hilbert.size), dtype=jnp.float64)
     target_parameters = target.init(target_key, initial_sigma)["params"]
     proposal_parameters = proposal.init(proposal_key, initial_sigma)["params"]

@@ -9,10 +9,6 @@ if NIS_DEVICE is not None:
     os.environ["JAX_PLATFORM_NAME"] = NIS_DEVICE
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
-# Use NetKet's native SPMD mesh for the proposal pool and the matrix-free
-# weighted quantum-geometric-tensor solve. Set this to "0" only when testing
-# the legacy explicit-JAX/pmap backend.
-os.environ.setdefault("NETKET_EXPERIMENTAL_SHARDING", "1")
 
 THIS_DIR = Path(__file__).resolve().parent
 SITE_DIR = THIS_DIR.parent

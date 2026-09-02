@@ -7,7 +7,6 @@ import jax.numpy as jnp
 import netket as nk
 import optax
 import pytest
-from netket.utils import config as netket_config
 from netket.jax.sharding import gather
 
 from optim import WeightedSR
@@ -19,8 +18,8 @@ from vqs import WeightedNISState, WeightedNISVMC
 
 
 pytestmark = pytest.mark.skipif(
-    jax.device_count() < 2 or not netket_config.netket_experimental_sharding,
-    reason="requires at least two GPUs with NETKET_EXPERIMENTAL_SHARDING=1",
+    jax.device_count() < 2,
+    reason="requires at least two GPUs",
 )
 
 

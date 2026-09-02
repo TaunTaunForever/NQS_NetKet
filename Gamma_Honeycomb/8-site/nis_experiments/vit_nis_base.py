@@ -7,7 +7,6 @@ if NIS_DEVICE is not None:
     os.environ["JAX_PLATFORM_NAME"] = NIS_DEVICE
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
-os.environ.setdefault("NETKET_EXPERIMENTAL_SHARDING", "1")
 
 from run_gamma_nis import NISRunConfig, run_experiment
 

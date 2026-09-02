@@ -97,7 +97,8 @@ def test_weighted_nis_state_runs_with_standard_netket_vmc():
         optax.sgd(learning_rate=1.0e-3),
         variational_state=state,
     )
-    driver.advance(1)
+    # NetKet 3.22 replaced the old ``advance`` helper with ``run``.
+    driver.run(1, out=None, show_progress=False)
 
     assert isinstance(driver.energy, nk.stats.Stats)
     # NetKet resets a VQS after applying parameters; the completed weighted

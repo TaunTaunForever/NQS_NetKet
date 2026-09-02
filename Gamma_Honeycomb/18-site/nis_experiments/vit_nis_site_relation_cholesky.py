@@ -6,7 +6,6 @@ import sys
 # The weighted kernel is constructed from local Jacobian blocks on all visible
 # GPUs. The final 6144 x 6144 Cholesky factorisation is replicated because
 # standard JAX does not provide a distributed factorisation primitive.
-os.environ["NETKET_EXPERIMENTAL_SHARDING"] = "1"
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
 

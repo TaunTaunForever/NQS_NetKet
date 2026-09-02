@@ -9,10 +9,6 @@ if NIS_DEVICE is not None:
     os.environ["JAX_PLATFORM_NAME"] = NIS_DEVICE
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
-# Use NetKet's native SPMD mesh for the proposal pool and the matrix-free
-# weighted quantum-geometric-tensor solve. Set this to "0" only when testing
-# the legacy explicit-JAX/pmap backend.
-os.environ.setdefault("NETKET_EXPERIMENTAL_SHARDING", "1")
 
 THIS_DIR = Path(__file__).resolve().parent
 SITE_DIR = THIS_DIR.parent
@@ -34,10 +30,10 @@ CONFIG = NISRunConfig(
     # Default: NetKet VariationalState + NetKet-compatible NIS driver.
     # Use "explicit_jax" only to opt into the legacy experimental pmap backend.
     execution_backend="netket",
-    embed_dim=32,
-    num_heads=4,
-    num_layers=6,
-    mlp_hidden_dim=64,
+    embed_dim=24,
+    num_heads=2,
+    num_layers=10,
+    mlp_hidden_dim=48,
     patch_size=1,
 
     # Run length and output.
@@ -57,7 +53,8 @@ CONFIG = NISRunConfig(
     use_multi_gpu=True,
 
     # Autoregressive proposal training
-    proposal_embed_dim=32,
+    proposal_embed_dim=24,
+    proposal_num_layers=2,
     proposal_lr=1.0e-2,
     proposal_train_steps=1,
     proposal_train_batch_size=1024,
@@ -67,7 +64,7 @@ CONFIG = NISRunConfig(
     target_lr=3.0e-2,
     target_lr_final=1.0e-2,
     target_lr_decay_steps=10000,
-    sr_diag_shift=1.0e-3,
+    sr_diag_shift=1.0e-4,
     sr_chunk_size=2048,
     sr_trust_region=5.0e-1,
     sr_momentum=0.8,

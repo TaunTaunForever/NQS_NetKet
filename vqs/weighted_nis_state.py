@@ -17,7 +17,6 @@ from flax import core as fcore
 import netket as nk
 import optax
 from netket.jax.sharding import sharding_decorator
-from netket.utils import config as netket_config
 
 from diagnostics.nis_metrics import weighted_variational_statistics
 from samplers.importance_weights import stable_log_weights, stable_log_weights_sharded
@@ -46,11 +45,10 @@ class WeightedNISState(nk.vqs.VariationalState):
         for local energies.  This can be larger than ``chunk_size`` because it
         does not retain reverse-mode intermediates.
     use_sharding:
-        Distribute the proposal pool over NetKet's native ``S`` mesh.  This
-        requires ``NETKET_EXPERIMENTAL_SHARDING=1`` before importing NetKet and
-        a proposal count divisible by the number of local devices. Parameters
-        remain replicated; weighted expectation values and gradients are
-        reduced over the complete global pool.
+        Distribute the proposal pool over NetKet's native ``S`` mesh. The
+        proposal count must be divisible by the number of local devices.
+        Parameters remain replicated; weighted expectation values and
+        gradients are reduced over the complete global pool.
 
     The target parameters are exposed through the usual ``parameters``
     property, so this state can be passed directly to ``nk.driver.VMC`` with a
@@ -102,11 +100,6 @@ class WeightedNISState(nk.vqs.VariationalState):
         self.exact_enumeration_max_states = int(exact_enumeration_max_states)
         self.requested_sharding = bool(use_sharding)
         if self.requested_sharding and jax.device_count() > 1:
-            if not netket_config.netket_experimental_sharding:
-                raise RuntimeError(
-                    "multi-GPU weighted NIS requires NETKET_EXPERIMENTAL_SHARDING=1 "
-                    "before importing NetKet"
-                )
             if self.n_samples % jax.device_count() != 0:
                 raise ValueError(
                     "n_samples must be divisible by the number of JAX devices when "
@@ -115,7 +108,6 @@ class WeightedNISState(nk.vqs.VariationalState):
                 )
         self._uses_native_sharding = (
             self.requested_sharding
-            and netket_config.netket_experimental_sharding
             and jax.device_count() > 1
         )
         self.n_samples_per_device = (

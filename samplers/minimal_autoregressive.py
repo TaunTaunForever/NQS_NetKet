@@ -7,7 +7,9 @@ class MinimalAutoregressiveTransformer(nn.Module):
     n_sites: int
     embed_dim: int = 16
     num_heads: int = 2
-    num_layers: int = 2
+    # Match the proposal depth used in the original NIR experiments.  The
+    # experiment configuration passes this explicitly for production runs.
+    num_layers: int = 4
     probability_floor: float = 1e-8
 
     @nn.compact

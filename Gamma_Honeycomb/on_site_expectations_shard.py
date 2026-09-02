@@ -3,7 +3,6 @@ import json
 import os
 os.environ["JAX_PLATFORM_NAME"] = "gpu"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
-os.environ["NETKET_EXPERIMENTAL_SHARDING"] = '1'
 
 import jax
 jax.distributed.initialize()
@@ -19,7 +18,6 @@ import netket.experimental as nkx
 import flax
 import expectations
 
-print("Sharding is enabled:", nk.config.netket_experimental_sharding)
 print("The available GPUs are:", jax.devices())
 
 PREV_VARIABLES = "out_GCNN_G=1.0_72-site_4_layers_50_width_1024_samples_run-5_2025-05-26_minSR.mpack"
